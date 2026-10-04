@@ -5,9 +5,13 @@ from rich.console import Console
 from rich.table import Table
 from sqlalchemy import select
 
+from betmap.backtest.games import backtest
 from betmap.config import get_settings
+from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
 from betmap.db import init_db, make_engine, session_scope
+from betmap.models.game_model import ModelConfig
+from betmap.models.predict import load_predictions, predict_upcoming
 from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
@@ -27,6 +31,8 @@ odds_app = typer.Typer(help="Pull odds and scan for +EV prices.", no_args_is_hel
 app.add_typer(odds_app, name="odds")
 results_app = typer.Typer(help="Game results, auto-settlement, and CLV.", no_args_is_help=True)
 app.add_typer(results_app, name="results")
+model_app = typer.Typer(help="Game-line model: backtest and predictions.", no_args_is_help=True)
+app.add_typer(model_app, name="model")
 
 console = Console()
 
@@ -222,6 +228,9 @@ def odds_scan(
     method: Annotated[str, typer.Option(help="Devig: power, multiplicative, shin")] = "power",
     market: Annotated[str | None, typer.Option(help="Only this market type")] = None,
     all_books: Annotated[bool, typer.Option("--all-books", help="Ignore BETMAP_BOOKS")] = False,
+    model_weight: Annotated[
+        float, typer.Option(help="Blend in the game model (0-1); run `model predict` first")
+    ] = 0.0,
 ) -> None:
     """List +EV prices from the latest odds pull."""
     settings = get_settings()
@@ -236,6 +245,8 @@ def odds_scan(
             books=None if all_books else settings.book_set,
             kelly_mult=settings.kelly_fraction,
             max_bet_fraction=settings.max_bet_fraction,
+            model_probs=load_predictions(s) if model_weight else None,
+            model_weight=model_weight,
         )
         equity = ledger.summarize(s).equity
     if pulled is None:
@@ -312,6 +323,117 @@ def results_sync(
         result = status or ("[yellow]manual[/]" if manual else "[dim]pending[/]")
         table.add_row(str(bet_id), event, selection, result, reason)
     console.print(table)
+
+
+def parse_seasons(text: str) -> list[int]:
+    """'2015-2025' or '2019,2021,2023'."""
+    seasons: list[int] = []
+    for part in split_csv(text):
+        start, _, end = part.partition("-")
+        seasons.extend(range(int(start), int(end or start) + 1))
+    return seasons
+
+
+def model_config(half_life: float, ridge: float, margin_sd: float, total_sd: float):
+    return ModelConfig(
+        half_life_days=half_life, ridge=ridge, margin_sd=margin_sd, total_sd=total_sd
+    )
+
+
+HalfLife = Annotated[float, typer.Option(help="Days for a game's weight to halve")]
+Ridge = Annotated[float, typer.Option(help="Shrinkage toward an average team")]
+MarginSd = Annotated[float, typer.Option(help="Std dev of margin around prediction")]
+TotalSd = Annotated[float, typer.Option(help="Std dev of total around prediction")]
+_defaults = ModelConfig()
+
+
+@model_app.command("backtest")
+def model_backtest(
+    seasons: Annotated[str, typer.Option(help="Test seasons, e.g. 2015-2025")] = "2015-2025",
+    train_years: Annotated[int, typer.Option(help="Years of history to fit on")] = 4,
+    min_ev: Annotated[float, typer.Option(help="Bet when EV at the close is at least this")] = 0.02,
+    model_weight: Annotated[
+        float, typer.Option(help="Model share of the probability; the rest is the market")
+    ] = 1.0,
+    half_life: HalfLife = _defaults.half_life_days,
+    ridge: Ridge = _defaults.ridge,
+    margin_sd: MarginSd = _defaults.margin_sd,
+    total_sd: TotalSd = _defaults.total_sd,
+) -> None:
+    """Walk-forward backtest against historical closing lines (nflverse)."""
+    test = parse_seasons(seasons)
+    try:
+        rows = nflverse.fetch_schedules(list(range(min(test) - train_years, max(test) + 1)))
+    except StatsUnavailable as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    history = [
+        (nflverse.model_game(r), r["season"], r["week"], nflverse.closing_lines(r)) for r in rows
+    ]
+    report = backtest(
+        history,
+        test,
+        model_config(half_life, ridge, margin_sd, total_sd),
+        min_ev=min_ev,
+        train_days=train_years * 365,
+        model_weight=model_weight,
+    )
+    if not report.games:
+        console.print("No completed games with closing lines in those seasons.")
+        return
+
+    fit = Table(title=f"Prediction error, {report.games} games (lower is better)")
+    for col in ("", "Model", "Closing line"):
+        fit.add_column(col)
+    fit.add_row("Margin MAE", f"{report.margin_mae_model:.2f}", f"{report.margin_mae_market:.2f}")
+    fit.add_row("Total MAE", f"{report.total_mae_model:.2f}", f"{report.total_mae_market:.2f}")
+    if report.brier_model is not None:
+        fit.add_row("Home win Brier", f"{report.brier_model:.4f}", f"{report.brier_market:.4f}")
+    console.print(fit)
+
+    bets = Table(title=f"Flat 1u bets at the closing price, EV >= {min_ev:.0%}")
+    markets = ("spreads", "totals", "h2h")
+    for col in ("Season", *markets):
+        bets.add_column(col)
+
+    def cell(r) -> str:
+        if not r.bets:
+            return "-"
+        return f"{r.wins}-{r.losses}-{r.pushes}  {r.roi:+.1%}"
+
+    for season in sorted(report.by_season):
+        bets.add_row(str(season), *(cell(report.by_season[season][m]) for m in markets))
+    bets.add_row("[bold]All[/]", *(cell(report.markets[m]) for m in markets))
+    claimed = [
+        f"{sum(r.claimed_ev) / len(r.claimed_ev):+.1%}" if r.bets else "-"
+        for r in (report.markets[m] for m in markets)
+    ]
+    bets.add_row("[dim]claimed EV[/]", *claimed)
+    console.print(bets)
+    console.print(
+        "[dim]At -110, breaking even needs 52.4% wins. If ROI is far below the claimed EV, "
+        "the model is overconfident.[/]"
+    )
+
+
+@model_app.command("predict")
+def model_predict(
+    train_years: Annotated[int, typer.Option(help="Years of history to fit on")] = 4,
+    half_life: HalfLife = _defaults.half_life_days,
+    ridge: Ridge = _defaults.ridge,
+    margin_sd: MarginSd = _defaults.margin_sd,
+    total_sd: TotalSd = _defaults.total_sd,
+) -> None:
+    """Store model probabilities for upcoming games' lines in the latest odds pull."""
+    season = nflverse.current_season()
+    try:
+        rows = nflverse.fetch_schedules(list(range(season - train_years, season + 1)))
+    except StatsUnavailable as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    with session_scope() as s:
+        n = predict_upcoming(s, rows, model_config(half_life, ridge, margin_sd, total_sd))
+    console.print(f"Stored {n} predictions. Use them with: betmap odds scan --model-weight 0.25")
 
 
 @app.command()

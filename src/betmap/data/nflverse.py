@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from betmap.backtest.games import ClosingLines
+from betmap.models.game_model import Game
 from betmap.tables import Event, PlayerGameStat, as_utc
 from betmap.teams import full_name
 
@@ -47,14 +49,23 @@ class StatsUnavailable(Exception):
     pass
 
 
-def fetch(seasons: list[int]) -> tuple[list[dict], list[dict]]:
-    """Download schedules and weekly player stats; returns (games, player_stats) rows."""
+def _nflreadpy():
     try:
         import nflreadpy
     except ImportError:
         raise StatsUnavailable(
             "nflverse sync needs the stats extra: pip install -e '.[stats]'"
         ) from None
+    return nflreadpy
+
+
+def fetch_schedules(seasons: list[int]) -> list[dict]:
+    return _nflreadpy().load_schedules(seasons).to_dicts()
+
+
+def fetch(seasons: list[int]) -> tuple[list[dict], list[dict]]:
+    """Download schedules and weekly player stats; returns (games, player_stats) rows."""
+    nflreadpy = _nflreadpy()
     games = nflreadpy.load_schedules(seasons).to_dicts()
     stats = nflreadpy.load_player_stats(seasons, summary_level="week")
     return games, stats.select(STAT_COLUMNS).to_dicts()
@@ -135,3 +146,33 @@ def sync_player_stats(session: Session, rows: Iterable[dict]) -> int:
     )
     session.flush()
     return len(rows)
+
+
+def model_game(row: dict) -> Game:
+    return Game(
+        game_id=row["game_id"],
+        kickoff=kickoff_utc(row["gameday"], row["gametime"]),
+        home=row["home_team"],
+        away=row["away_team"],
+        neutral=row.get("location") == "Neutral",
+        home_score=row["home_score"],
+        away_score=row["away_score"],
+    )
+
+
+def closing_lines(row: dict) -> ClosingLines | None:
+    required = (
+        "spread_line",
+        "home_spread_odds",
+        "away_spread_odds",
+        "total_line",
+        "over_odds",
+        "under_odds",
+    )
+    if any(row.get(k) is None for k in required):
+        return None
+    return ClosingLines(
+        **{k: row[k] for k in required},
+        home_moneyline=row.get("home_moneyline"),
+        away_moneyline=row.get("away_moneyline"),
+    )

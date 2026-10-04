@@ -35,6 +35,7 @@ class Opportunity:
     n_books: int  # books in the consensus (excluding this one)
     best_other: float | None  # best price at any other book, for context
     kelly: float  # suggested bankroll fraction after multiplier and cap
+    model_prob: float | None = None  # game model's probability, when one was blended in
 
 
 def last_pull_at(session: Session) -> datetime | None:
@@ -91,12 +92,16 @@ def scan(
     books: set[str] | None = None,
     kelly_mult: float = 0.25,
     max_bet_fraction: float = 0.03,
+    model_probs: dict[tuple[int, str, float | None], float] | None = None,
+    model_weight: float = 0.0,
     now: datetime | None = None,
 ) -> list[Opportunity]:
     """Return +EV prices sorted by EV, best first.
 
     `books` limits which books are reported (e.g. the ones you have accounts at); every
-    book still contributes to the consensus.
+    book still contributes to the consensus. With `model_weight` > 0, the fair probability
+    is that blend of the model's probability (keyed by market id, side, line) and the
+    consensus; lines the model doesn't cover use the consensus alone.
     """
     now = now or utcnow()
     # (market_id, line key) -> book -> side -> (price, line)
@@ -138,6 +143,9 @@ def scan(
                 if len(consensus) < min_books:
                     continue
                 fair = fmean(consensus)
+                model_p = (model_probs or {}).get((market_id, side, line))
+                if model_weight and model_p is not None:
+                    fair = model_weight * model_p + (1 - model_weight) * fair
                 ev = expected_value(fair, price)
                 if ev < min_ev:
                     continue
@@ -157,6 +165,7 @@ def scan(
                         n_books=len(consensus),
                         best_other=max(others) if others else None,
                         kelly=min(kelly_fraction(fair, price) * kelly_mult, max_bet_fraction),
+                        model_prob=model_p if model_weight else None,
                     )
                 )
     opportunities.sort(key=lambda o: o.ev, reverse=True)

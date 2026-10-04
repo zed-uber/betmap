@@ -16,6 +16,7 @@ from betmap.config import get_settings
 from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
 from betmap.db import init_db, make_engine, session_scope
+from betmap.models.predict import load_predictions
 from betmap.odds.client import OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
@@ -164,6 +165,7 @@ def create_app(
         method: str = "power",
         market: str = "",
         all_books: bool = False,
+        model_weight: float = 0.0,
         error: str = "",
         msg: str = "",
     ):
@@ -177,6 +179,8 @@ def create_app(
             books=None if all_books else settings.book_set,
             kelly_mult=settings.kelly_fraction,
             max_bet_fraction=settings.max_bet_fraction,
+            model_probs=load_predictions(session) if model_weight else None,
+            model_weight=min(max(model_weight, 0.0), 1.0),
         )
         equity = ledger.summarize(session).equity
         rows = []
@@ -211,6 +215,7 @@ def create_app(
                     "method": method,
                     "market": market,
                     "all_books": all_books,
+                    "model_weight": model_weight,
                 },
                 "error": error,
                 "msg": msg,
