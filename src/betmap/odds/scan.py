@@ -36,6 +36,7 @@ class Opportunity:
     best_other: float | None  # best price at any other book, for context
     kelly: float  # suggested bankroll fraction after multiplier and cap
     model_prob: float | None = None  # game model's probability, when one was blended in
+    side: str = ""  # raw side as quoted: team name, Over/Under, Yes/No
 
 
 def last_pull_at(session: Session) -> datetime | None:
@@ -166,6 +167,7 @@ def scan(
                         best_other=max(others) if others else None,
                         kelly=min(kelly_fraction(fair, price) * kelly_mult, max_bet_fraction),
                         model_prob=model_p if model_weight else None,
+                        side=side,
                     )
                 )
     opportunities.sort(key=lambda o: o.ev, reverse=True)

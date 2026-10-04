@@ -19,6 +19,9 @@ from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
 from betmap.odds.scan import last_pull_at, scan
+from betmap.portfolio.correlation import estimate_correlations
+from betmap.portfolio.optimize import overlaps, risk, size
+from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.tables import Bet, BetStatus, Market
 from betmap.tracking import ledger
 from betmap.tracking.results import update_results
@@ -36,6 +39,10 @@ results_app = typer.Typer(help="Game results, auto-settlement, and CLV.", no_arg
 app.add_typer(results_app, name="results")
 model_app = typer.Typer(help="Game-line model: backtest and predictions.", no_args_is_help=True)
 app.add_typer(model_app, name="model")
+portfolio_app = typer.Typer(
+    help="Joint risk, overlapping bets, and correlated Kelly sizing.", no_args_is_help=True
+)
+app.add_typer(portfolio_app, name="portfolio")
 
 console = Console()
 
@@ -521,6 +528,139 @@ def model_evaluate() -> None:
         f"[dim]{result.pending} waiting on results, {result.no_close} without a closing "
         "consensus to compare against.[/]"
     )
+
+
+@portfolio_app.command("risk")
+def portfolio_risk() -> None:
+    """Simulated P/L of all open bets together, and which ones overlap."""
+    with session_scope() as s:
+        positions, skipped = open_positions(s)
+        summary = risk(positions)
+        linked = overlaps(positions)
+    if not positions:
+        console.print("No open bets to analyze.")
+    else:
+        table = Table(title=f"Open bets: {len(positions)} positions", show_header=False)
+        table.add_row("Expected P/L", f"{summary.expected:+.2f}")
+        table.add_row("Std dev", f"{summary.sd:.2f}")
+        table.add_row("Chance of a net loss", f"{summary.p_loss:.0%}")
+        table.add_row("Bad week (5th pct)", f"{summary.p05:+.2f}")
+        table.add_row("Everything loses", f"{summary.worst:+.2f}")
+        for game, staked in sorted(summary.by_game.items(), key=lambda kv: -kv[1]):
+            table.add_row(f"  at risk on {game}", f"{staked:.2f}")
+        console.print(table)
+        assumed = [p.label for p in positions if p.prob_source == "assumed"]
+        if assumed:
+            console.print(
+                f"[dim]No fair probability for {', '.join(assumed)}: assumed the price "
+                "minus a typical margin.[/]"
+            )
+    if linked:
+        table = Table(title="Overlapping bets")
+        for col in ("Bet", "Bet", "Correlation"):
+            table.add_column(col)
+        for o in linked:
+            table.add_row(o.a.label, o.b.label, f"{o.correlation:+.2f}")
+        console.print(table)
+    for bet in skipped:
+        console.print(
+            f"[yellow]Couldn't place #{bet.id} ({bet.event_label} {bet.selection}) in a game.[/]"
+        )
+
+
+@portfolio_app.command("size")
+def portfolio_size(
+    min_ev: Annotated[float, typer.Option(help="Candidates from the scan above this EV")] = 0.02,
+    min_books: Annotated[int, typer.Option(help="Books needed to form a consensus")] = 3,
+    model_weight: Annotated[float, typer.Option(help="Blend in model predictions (0-1)")] = 0.0,
+    all_books: Annotated[bool, typer.Option("--all-books", help="Ignore BETMAP_BOOKS")] = False,
+) -> None:
+    """Size the scan's +EV prices together, accounting for correlation and open bets."""
+    settings = get_settings()
+    with session_scope() as s:
+        opps = scan(
+            s,
+            min_ev=min_ev,
+            min_books=min_books,
+            books=None if all_books else settings.book_set,
+            kelly_mult=settings.kelly_fraction,
+            max_bet_fraction=settings.max_bet_fraction,
+            model_probs=load_predictions(s) if model_weight else None,
+            model_weight=model_weight,
+        )
+        candidates = candidate_positions(s, opps)
+        existing, _ = open_positions(s)
+        equity = ledger.summarize(s).equity
+    if not candidates:
+        console.print("No candidates; pull odds or lower --min-ev.")
+        return
+    if equity <= 0:
+        console.print("[yellow]No bankroll recorded; stakes are shown as % of bankroll.[/]")
+    sized = size(
+        candidates,
+        existing,
+        equity,
+        kelly_mult=settings.kelly_fraction,
+        max_bet=settings.max_bet_fraction,
+        max_game=settings.max_game_fraction,
+    )
+    table = Table(title="Suggested stakes (fractional Kelly, sized together)")
+    for col in ("Game", "Bet", "Odds", "EV", "Alone", "Together"):
+        table.add_column(col)
+
+    def money(frac: float) -> str:
+        return f"{frac * equity:.2f}" if equity > 0 else f"{frac:.2%}"
+
+    for z in sorted(sized, key=lambda z: (-z.portfolio, -z.independent)):
+        p = z.position
+        table.add_row(
+            p.game_label,
+            p.label,
+            f"{decimal_to_american(p.price):+.0f}",
+            f"{p.prob * p.price - 1:+.1%}",
+            money(z.independent),
+            money(z.portfolio) if z.portfolio else "[dim]0[/]",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]Alone = each bet sized by itself (what the scan shows). Together = joint "
+        f"Kelly with your {len(existing)} open bets held fixed, max "
+        f"{settings.max_bet_fraction:.0%} per bet and {settings.max_game_fraction:.0%} "
+        "per game.[/]"
+    )
+
+
+@portfolio_app.command("correlations")
+def portfolio_correlations(
+    seasons: Annotated[str, typer.Option(help="Seasons to estimate from")] = "2021-2025",
+) -> None:
+    """Re-estimate the prop correlation numbers from nflverse (compare with the built-ins)."""
+    years = parse_seasons(seasons)
+    try:
+        players = nflverse.fetch_player_stats(years)
+        games = nflverse.fetch_schedules(years)
+    except StatsUnavailable as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    est = estimate_correlations(players, games)
+    table = Table(title="Game script: prop Over vs team margin and total surprise")
+    for col in ("Market", "Margin", "Total"):
+        table.add_column(col)
+    for market, (m, t) in est["game_script"].items():
+        table.add_row(market, f"{m:+.2f}", f"{t:+.2f}")
+    console.print(table)
+    table = Table(title="Same player, after game script")
+    for col in ("Markets", "Correlation"):
+        table.add_column(col)
+    for pair, r in sorted(est["same_player"].items(), key=lambda kv: -abs(kv[1])):
+        if abs(r) >= 0.1:
+            table.add_row(" ~ ".join(sorted(m.removeprefix("player_") for m in pair)), f"{r:+.2f}")
+    console.print(table)
+    console.print(
+        f"Teammates: QB pass yds ~ receiver yds {est['qb_to_receiver']:+.2f}, "
+        f"anytime TD ~ anytime TD {est['td_to_td']:+.2f}"
+    )
+    console.print("[dim]Built-in values live in betmap/portfolio/correlation.py.[/]")
 
 
 @app.command()

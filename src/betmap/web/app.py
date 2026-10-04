@@ -20,7 +20,9 @@ from betmap.models.predict import load_predictions
 from betmap.odds.client import OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
-from betmap.odds.scan import DEVIG_CHOICES, last_pull_at, scan
+from betmap.odds.scan import DEVIG_CHOICES, Opportunity, last_pull_at, scan
+from betmap.portfolio.optimize import overlaps, risk, size
+from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.tables import Bet, BetStatus
 from betmap.tracking import ledger
 from betmap.tracking.results import Fetch, update_results
@@ -47,6 +49,22 @@ def redirect(path: str, anchor: str = "", **params: str) -> RedirectResponse:
     query = urlencode({k: v for k, v in params.items() if v})
     url = f"{path}?{query}" if query else path
     return RedirectResponse(f"{url}#{anchor}" if anchor else url, status_code=303)
+
+
+def log_url(o: Opportunity, stake: float | None) -> str:
+    """Dashboard link with the bet form prefilled from a scan opportunity."""
+    params = {
+        "event": o.event_label,
+        "market": o.market_type,
+        "selection": o.selection,
+        "line": "" if o.line is None else f"{o.line:g}",
+        "odds": f"{decimal_to_american(o.price):+.0f}",
+        "book": o.book,
+        "fair_prob": f"{o.fair_prob:.4f}",
+        "stake": "" if stake is None else f"{stake:.2f}",
+        "market_id": str(o.market_id),
+    }
+    return "/?" + urlencode(params)
 
 
 class FieldError(ValueError):
@@ -186,18 +204,7 @@ def create_app(
         rows = []
         for o in opportunities:
             stake = round(o.kelly * equity, 2) if equity > 0 else None
-            log_params = {
-                "event": o.event_label,
-                "market": o.market_type,
-                "selection": o.selection,
-                "line": "" if o.line is None else f"{o.line:g}",
-                "odds": f"{decimal_to_american(o.price):+.0f}",
-                "book": o.book,
-                "fair_prob": f"{o.fair_prob:.4f}",
-                "stake": "" if stake is None else f"{stake:.2f}",
-                "market_id": str(o.market_id),
-            }
-            rows.append({"o": o, "stake": stake, "log_url": "/?" + urlencode(log_params)})
+            rows.append({"o": o, "stake": stake, "log_url": log_url(o, stake)})
         return templates.TemplateResponse(
             request,
             "scan.html",
@@ -219,6 +226,54 @@ def create_app(
                 },
                 "error": error,
                 "msg": msg,
+            },
+        )
+
+    @app.get("/portfolio", response_class=HTMLResponse)
+    def portfolio_page(
+        request: Request,
+        session: SessionDep,
+        min_ev: float = 0.02,
+        model_weight: float = 0.0,
+        all_books: bool = False,
+    ):
+        settings = get_settings()
+        existing, skipped = open_positions(session)
+        equity = ledger.summarize(session).equity
+        opportunities = scan(
+            session,
+            min_ev=min_ev,
+            books=None if all_books else settings.book_set,
+            kelly_mult=settings.kelly_fraction,
+            max_bet_fraction=settings.max_bet_fraction,
+            model_probs=load_predictions(session) if model_weight else None,
+            model_weight=min(max(model_weight, 0.0), 1.0),
+        )
+        sized = size(
+            candidate_positions(session, opportunities),
+            existing,
+            equity,
+            kelly_mult=settings.kelly_fraction,
+            max_bet=settings.max_bet_fraction,
+            max_game=settings.max_game_fraction,
+        )
+        sized.sort(key=lambda z: (-z.portfolio, -z.independent))
+        rows = []
+        for z in sized:
+            stake = round(z.portfolio * equity, 2) if equity > 0 else None
+            rows.append({"z": z, "log_url": log_url(z.position.opportunity, stake)})
+        return templates.TemplateResponse(
+            request,
+            "portfolio.html",
+            {
+                "existing": existing,
+                "skipped": skipped,
+                "risk": risk(existing) if existing else None,
+                "overlaps": overlaps(existing + [z.position for z in sized if z.portfolio]),
+                "rows": rows,
+                "equity": equity,
+                "settings": settings,
+                "f": {"min_ev": min_ev, "model_weight": model_weight, "all_books": all_books},
             },
         )
 

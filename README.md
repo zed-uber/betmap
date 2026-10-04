@@ -148,6 +148,36 @@ Instead:
   market shows a lower Brier score than the close over a few hundred predictions, keep
   `--model-weight` low or at 0.
 
+### Portfolio: joint risk and sizing
+
+```sh
+betmap portfolio risk                      # open bets simulated together, and overlaps
+betmap portfolio size [--min-ev 0.02]      # size the scan's prices jointly
+betmap portfolio correlations              # re-estimate the prop correlations
+```
+
+Also the **Portfolio** page in the web UI.
+
+The scan sizes each bet as if it were the only one. Bets aren't independent, though: a team's
+moneyline and spread win together, a QB's passing yards rise with his receivers', and an
+Under hedges an Over. The portfolio models that with a Gaussian copula, where every bet wins
+when a shared latent variable clears its probability's threshold:
+
+- Game lines are exact functions of each game's margin and total. Team totals and first-half
+  markets load on both, partially.
+- Props link to their team's margin and the total ("game script"), to the same player's
+  other stats, and to teammates. The links were estimated from nflverse 2021-2025: RB rushing
+  yards rise when the team covers (+0.23), QB passing TDs with the total (+0.46),
+  receptions with receiving yards (+0.77), a QB's yards with his receivers' (+0.29).
+- Different games are independent.
+
+`size` maximizes the expected log growth of everything together, with your open bets held
+fixed, at your Kelly fraction and within `BETMAP_MAX_BET_FRACTION` per bet and
+`BETMAP_MAX_GAME_FRACTION` per game (open bets count toward the game cap). Correlated bets
+get smaller combined stakes than sizing them one at a time; a bet whose risk is already
+covered gets 0. Open bets without a fair probability are assumed to be priced at a typical
+margin.
+
 ## Roadmap
 
 1. ✅ Ledger, bankroll, odds math (devig: multiplicative/power/Shin, EV, Kelly)
@@ -155,4 +185,4 @@ Instead:
 3. ✅ nflverse stats sync, auto-settlement, CLV tracking
 4. ✅ Game-line model + walk-forward backtest (no edge yet)
 5. ✅ Player prop models + backtest (forward test accumulating)
-6. Portfolio: joint simulation, overlap detection, correlated fractional Kelly
+6. ✅ Portfolio: joint simulation, overlap detection, correlated fractional Kelly

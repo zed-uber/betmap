@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Portfolio · betmap{% endblock %}
+{% block content %}
+{% set r = risk %}
+<section class="cards">
+  <div class="card"><div class="label">Expected P/L</div>
+    <div class="value {% if r %}{{ 'pos' if r.expected > 0 else 'neg' if r.expected < 0 else '' }}{% endif %}">{{ r.expected | signed if r else 'n/a' }}</div>
+    <div class="sub">{{ existing | length }} open bet{{ '' if existing | length == 1 else 's' }}{% if r %} · sd {{ r.sd | money }}{% endif %}</div></div>
+  <div class="card"><div class="label">Chance of a net loss</div>
+    <div class="value">{{ '%.0f%%' % (r.p_loss * 100) if r else 'n/a' }}</div>
+    <div class="sub">simulated jointly</div></div>
+  <div class="card"><div class="label">Bad week</div>
+    <div class="value {{ 'neg' if r and r.p05 < 0 else '' }}">{{ r.p05 | signed if r else 'n/a' }}</div>
+    <div class="sub">5th percentile{% if r %} · all lose {{ r.worst | signed }}{% endif %}</div></div>
+</section>
+
+{% if r and r.by_game %}
+<section class="panel">
+  <h2>At risk by game</h2>
+  <dl class="facts">
+    {% for game, staked in r.by_game | dictsort(by='value', reverse=true) %}
+    <dt>{{ game }}</dt><dd>{{ staked | money }}{% if equity > 0 %} <span class="muted">({{ '%.1f' % (staked / equity * 100) }}%)</span>{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  {% set assumed = existing | selectattr('prob_source', 'equalto', 'assumed') | map(attribute='label') | list %}
+  {% if assumed %}<p class="hint">No fair probability for {{ assumed | join(', ') }}: assumed the price minus a typical margin.</p>{% endif %}
+  {% for b in skipped %}<p class="hint">Couldn't place #{{ b.id }} ({{ b.event_label }} {{ b.selection }}) in a game; it's left out.</p>{% endfor %}
+</section>
+{% endif %}
+
+{% if overlaps %}
+<section class="panel">
+  <h2>Overlapping bets <span class="muted">outcomes that move together (+) or against each other (−)</span></h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Bet</th><th>Bet</th><th class="num">Correlation</th></tr></thead>
+    <tbody>
+    {% for o in overlaps %}
+      <tr><td>{{ o.a.label }}</td><td>{{ o.b.label }}</td>
+        <td class="num {{ 'neg' if o.correlation < 0 else '' }}">{{ '%+.2f' % o.correlation }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Size new bets together</h2>
+  <form method="get" action="/portfolio" class="filter-form">
+    <label>Min EV <input name="min_ev" value="{{ f.min_ev }}" inputmode="decimal" size="5"></label>
+    <label>Model weight <input name="model_weight" value="{{ f.model_weight }}" inputmode="decimal" size="4"></label>
+    {% if settings.book_set %}<label class="check"><input type="checkbox" name="all_books" value="true" {% if f.all_books %}checked{% endif %}> all books</label>{% endif %}
+    <button type="submit">Apply</button>
+  </form>
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Game</th><th>Bet</th><th class="num">Odds</th><th class="num">EV</th>
+      <th class="num" title="Each bet sized by itself, as on the Scan page">Alone</th>
+      <th class="num" title="Joint fractional Kelly with your open bets held fixed">Together</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set z = row.z %}{% set p = z.position %}
+      <tr>
+        <td>{{ p.game_label }}</td>
+        <td>{{ p.label }}</td>
+        <td class="num">{{ p.price | american }}</td>
+        <td class="num pos">{{ (p.prob * p.price - 1) | pct }}</td>
+        <td class="num muted">{{ (z.independent * equity) | money if equity > 0 else '%.2f%%' % (z.independent * 100) }}</td>
+        <td class="num">{% if z.portfolio %}{{ (z.portfolio * equity) | money if equity > 0 else '%.2f%%' % (z.portfolio * 100) }}{% else %}<span class="muted">0</span>{% endif %}</td>
+        <td>{% if z.portfolio %}<a href="{{ row.log_url }}#log">Log</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">{{ '%g' % (settings.kelly_fraction * 100) }}%-Kelly on equity, max {{ '%g' % (settings.max_bet_fraction * 100) }}% per bet and {{ '%g' % (settings.max_game_fraction * 100) }}% per game including open bets. Bets on the same game or player are sized down together; a 0 means the others already cover that risk.</p>
+  {% else %}<p class="muted">No scan prices at or above {{ '%g' % (f.min_ev * 100) }}% EV for upcoming games.</p>{% endif %}
+</section>
+{% endblock %}
