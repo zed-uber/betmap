@@ -67,6 +67,33 @@ def log_url(o: Opportunity, stake: float | None) -> str:
     return "/?" + urlencode(params)
 
 
+ODDS_HELP = "odds must be American (-110), decimal (1.91), or a contract price (0.57 / 57c)"
+
+
+def parse_bet_fields(entered: dict[str, str]) -> dict:
+    """Validate the bet form's text fields into ledger values; raises FieldError."""
+    return {
+        "event_label": entered["event"].strip(),
+        "market_type": entered["market"].strip(),
+        "selection": entered["selection"].strip(),
+        "line": parse_field(
+            "line", optional_float, entered["line"], "line must be a number like -2.5"
+        ),
+        "book": entered["book"].strip(),
+        "price": parse_field("odds", parse_odds, entered["odds"], ODDS_HELP),
+        "stake": parse_field(
+            "stake", parse_stake, entered["stake"], "stake must be a positive number"
+        ),
+        "fair_prob": parse_field(
+            "fair_prob",
+            parse_prob,
+            entered["fair_prob"],
+            "fair prob must be like 0.54, 54, or 54%",
+        ),
+        "notes": entered["notes"].strip() or None,
+    }
+
+
 class FieldError(ValueError):
     """Bad input in one form field; `field` is the input's name."""
 
@@ -290,7 +317,9 @@ def create_app(
         return redirect("/scan", msg=msg)
 
     @app.get("/bets", response_class=HTMLResponse)
-    def bets_page(request: Request, session: SessionDep, status: str = ""):
+    def bets_page(
+        request: Request, session: SessionDep, status: str = "", error: str = "", msg: str = ""
+    ):
         query = select(Bet).order_by(Bet.placed_at.desc())
         if status:
             query = query.where(Bet.status == status)
@@ -301,6 +330,8 @@ def create_app(
                 "bets": session.scalars(query).all(),
                 "status": status,
                 "statuses": [s.value for s in BetStatus],
+                "error": error,
+                "msg": msg,
             },
         )
 
@@ -331,34 +362,11 @@ def create_app(
             "market_id": market_id,
         }
         try:
-            price = parse_field(
-                "odds",
-                parse_odds,
-                odds,
-                "odds must be American (-110), decimal (1.91), or a contract price (0.57 / 57c)",
-            )
-            stake_amount = parse_field(
-                "stake", parse_stake, stake, "stake must be a positive number"
-            )
-            line_value = parse_field(
-                "line", optional_float, line, "line must be a number like -2.5"
-            )
-            prob = parse_field(
-                "fair_prob", parse_prob, fair_prob, "fair prob must be like 0.54, 54, or 54%"
-            )
+            fields = parse_bet_fields(entered)
             bet = ledger.place_bet(
-                session,
-                event_label=event.strip(),
-                market_type=market,
-                selection=selection.strip(),
-                line=line_value,
-                book=book.strip(),
-                price=price,
-                stake=stake_amount,
-                fair_prob=prob,
-                notes=notes.strip() or None,
-                market_id=int(market_id) if market_id.strip() else None,
+                session, **fields, market_id=int(market_id) if market_id.strip() else None
             )
+            price, prob = fields["price"], fields["fair_prob"]
         except ValueError as e:
             # Send back what was typed so the form can be corrected rather than retyped.
             invalid = e.field if isinstance(e, FieldError) else ""
@@ -375,15 +383,86 @@ def create_app(
     def settle(
         session: SessionDep,
         bet_id: int,
-        result: Annotated[str, Form()],
+        result: Annotated[str, Form()] = "",  # empty arrives as missing; guarded below
         closing_odds: Annotated[str, Form()] = "",
     ):
+        if not result:
+            return redirect("/", error=f"Couldn't settle #{bet_id}: pick win, loss, push, or void")
         try:
             closing = parse_odds(closing_odds) if closing_odds.strip() else None
             bet = ledger.settle_bet(session, bet_id, BetStatus(result), closing)
         except ValueError as e:
             return redirect("/", error=f"Couldn't settle bet: {e}")
         return redirect("/", msg=f"Settled #{bet.id} as {bet.status}: {bet.profit:+.2f}")
+
+    @app.get("/bets/{bet_id}/edit", response_class=HTMLResponse)
+    def edit_page(request: Request, session: SessionDep, bet_id: int, error: str = ""):
+        bet = session.get(Bet, bet_id)
+        if bet is None:
+            return redirect("/bets", error=f"No bet #{bet_id}")
+        if error:  # coming back from a rejected save: show what was typed
+            values = dict(request.query_params)
+        else:
+            values = {
+                "event": bet.event_label,
+                "market": bet.market_type,
+                "selection": bet.selection,
+                "line": "" if bet.line is None else f"{bet.line:g}",
+                "odds": f"{decimal_to_american(bet.price):+.0f}",
+                "stake": f"{bet.stake:.2f}",
+                "book": bet.book,
+                "fair_prob": "" if bet.fair_prob is None else f"{bet.fair_prob:.4g}",
+                "notes": bet.notes or "",
+                "status": bet.status,
+            }
+        return templates.TemplateResponse(
+            request,
+            "bet_edit.html",
+            {
+                "bet": bet,
+                "prefill": values,
+                "statuses": [s.value for s in BetStatus],
+                "market_types": MARKET_TYPES,
+                "error": error,
+            },
+        )
+
+    @app.post("/bets/{bet_id}/edit")
+    def save_edit(
+        session: SessionDep,
+        bet_id: int,
+        event: Annotated[str, Form()],
+        market: Annotated[str, Form()],
+        selection: Annotated[str, Form()],
+        odds: Annotated[str, Form()],
+        stake: Annotated[str, Form()],
+        book: Annotated[str, Form()],
+        status: Annotated[str, Form()],
+        line: Annotated[str, Form()] = "",
+        fair_prob: Annotated[str, Form()] = "",
+        notes: Annotated[str, Form()] = "",
+    ):
+        entered = {
+            "event": event,
+            "market": market,
+            "selection": selection,
+            "odds": odds,
+            "stake": stake,
+            "book": book,
+            "line": line,
+            "fair_prob": fair_prob,
+            "notes": notes,
+            "status": status,
+        }
+        try:
+            bet = ledger.edit_bet(session, bet_id, **parse_bet_fields(entered), status=status)
+        except ValueError as e:
+            invalid = e.field if isinstance(e, FieldError) else ""
+            return redirect(
+                f"/bets/{bet_id}/edit", error=f"Couldn't save: {e}", invalid=invalid, **entered
+            )
+        result = "open" if bet.status == BetStatus.OPEN else f"{bet.status} {bet.profit:+.2f}"
+        return redirect("/bets", msg=f"Saved #{bet.id}: {bet.selection} ({result})")
 
     @app.post("/results/sync")
     def sync_results(session: SessionDep):

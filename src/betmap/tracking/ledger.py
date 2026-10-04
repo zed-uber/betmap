@@ -54,6 +54,64 @@ def place_bet(
     return bet
 
 
+def payout(status: BetStatus, stake: float, price: float) -> float:
+    """Total returned, stake included, for a settled result."""
+    return {
+        BetStatus.WIN: stake * price,
+        BetStatus.LOSS: 0.0,
+        BetStatus.PUSH: stake,
+        BetStatus.VOID: stake,
+    }[status]
+
+
+# Changing any of these changes what the bet is, so its game link and closing line no
+# longer apply; results sync works them out again.
+IDENTITY_FIELDS = ("event_label", "market_type", "selection", "line")
+
+
+def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
+    """Change a bet's fields and/or its result ("status"; "open" un-settles it).
+
+    Settled bets get their payout recomputed from the new stake, price, and result.
+    """
+    bet = session.get(Bet, bet_id)
+    if bet is None:
+        raise ValueError(f"no bet with id {bet_id}")
+    allowed = {
+        "event_label", "market_type", "selection", "line", "book", "price", "stake",
+        "fair_prob", "notes", "status",
+    }  # fmt: skip
+    unknown = set(changes) - allowed
+    if unknown:
+        raise ValueError(f"can't edit {', '.join(sorted(unknown))}")
+    if "stake" in changes and changes["stake"] <= 0:
+        raise ValueError("stake must be positive")
+    if "price" in changes and changes["price"] <= 1:
+        raise ValueError("price must be decimal odds > 1")
+    prob = changes.get("fair_prob")
+    if prob is not None and not 0 < prob < 1:
+        raise ValueError("fair prob must be between 0 and 1")
+    status = BetStatus(changes.pop("status", bet.status))
+
+    if any(f in changes and changes[f] != getattr(bet, f) for f in IDENTITY_FIELDS):
+        bet.event_id = None
+        bet.market_id = None
+        bet.closing_price = None
+        bet.closing_fair_prob = None
+    for field, value in changes.items():
+        setattr(bet, field, value)
+
+    if status == BetStatus.OPEN:
+        bet.payout = None
+        bet.settled_at = None
+    else:
+        bet.payout = payout(status, bet.stake, bet.price)
+        bet.settled_at = bet.settled_at or utcnow()
+    bet.status = status
+    session.flush()
+    return bet
+
+
 def settle_bet(
     session: Session, bet_id: int, result: BetStatus, closing_price: float | None = None
 ) -> Bet:
@@ -65,12 +123,7 @@ def settle_bet(
     if result == BetStatus.OPEN:
         raise ValueError("cannot settle a bet as open")
     bet.status = result
-    bet.payout = {
-        BetStatus.WIN: bet.stake * bet.price,
-        BetStatus.LOSS: 0.0,
-        BetStatus.PUSH: bet.stake,
-        BetStatus.VOID: bet.stake,
-    }[result]
+    bet.payout = payout(result, bet.stake, bet.price)
     if closing_price is not None:
         bet.closing_price = closing_price
     bet.settled_at = utcnow()

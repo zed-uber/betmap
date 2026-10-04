@@ -48,11 +48,13 @@
     {% for b in open_bets %}
       <tr>{% include "_bet_row.html" %}
         <td><form method="post" action="/bets/{{ b.id }}/settle" class="inline">
-          <select name="result" aria-label="Result for bet {{ b.id }}">
+          <select name="result" required aria-label="Result for bet {{ b.id }}">
+            <option value="" selected disabled>result…</option>
             {% for r in results %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
           </select>
           <input name="closing_odds" placeholder="close" size="5" aria-label="Closing odds (optional)">
           <button type="submit">Settle</button>
+          <a href="/bets/{{ b.id }}/edit" class="edit">edit</a>
         </form></td>
       </tr>
     {% endfor %}
