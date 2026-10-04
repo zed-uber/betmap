@@ -13,6 +13,12 @@
     <div class="sub">W-L-P</div></div>
   <div class="card"><div class="label">Open</div><div class="value">{{ s.open_exposure | money }}</div>
     <div class="sub">{{ s.open_bets }} bet{{ '' if s.open_bets == 1 else 's' }}{% if s.expected_profit_open is not none %} · exp {{ s.expected_profit_open | signed }}{% endif %}</div></div>
+  <div class="card"><div class="label">CLV</div>
+    {% if s.avg_clv is not none %}
+    <div class="value {{ 'pos' if s.avg_clv > 0 else 'neg' if s.avg_clv < 0 else '' }}">{{ s.avg_clv | pct }}</div>
+    <div class="sub">{{ '%.0f' % (s.beat_close * 100) }}% beat close · {{ s.clv_values | length }} bet{{ '' if s.clv_values | length == 1 else 's' }}</div>
+    {% else %}<div class="value muted">n/a</div><div class="sub">needs a pull before kickoff</div>{% endif %}
+  </div>
 </section>
 
 {% if curve %}
@@ -29,7 +35,11 @@
 {% endif %}
 
 <section class="panel">
-  <h2>Open bets</h2>
+  <h2>Open bets
+    <form method="post" action="/results/sync" class="inline more">
+      <button type="submit" title="Fetch scores and box scores from nflverse, record closing lines, settle finished games">Sync results</button>
+    </form>
+  </h2>
   {% if open_bets %}
   <div class="table-wrap"><table>
     <thead><tr><th>Placed</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Odds</th>

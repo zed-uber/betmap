@@ -7,14 +7,14 @@ probability of the *other* books (leave-one-out), so an outlier can't mask its o
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from statistics import fmean
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from betmap.odds.math import DEVIG_METHODS, devig, expected_value, kelly_fraction
-from betmap.tables import Event, Market, OddsSnapshot, utcnow
+from betmap.tables import Event, Market, OddsSnapshot, as_utc, utcnow
 from betmap.teams import abbr, matchup
 
 DEVIG_CHOICES = tuple(DEVIG_METHODS)
@@ -37,17 +37,12 @@ class Opportunity:
     kelly: float  # suggested bankroll fraction after multiplier and cap
 
 
-def as_utc(dt: datetime) -> datetime:
-    # SQLite hands back naive datetimes; everything is stored in UTC.
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
-
-
 def last_pull_at(session: Session) -> datetime | None:
     value = session.scalar(select(func.max(OddsSnapshot.fetched_at)))
     return None if value is None else as_utc(value)
 
 
-def _line_key(market_type: str, side: str, line: float | None, home_team: str) -> float | None:
+def line_key(market_type: str, side: str, line: float | None, home_team: str) -> float | None:
     """Key that puts both sides of the same proposition together.
 
     Spread sides carry opposite signs (BUF -2.5 / KC +2.5), so key them from the home side.
@@ -59,7 +54,7 @@ def _line_key(market_type: str, side: str, line: float | None, home_team: str) -
     return line
 
 
-def _selection(market: Market, side: str, event: Event) -> str:
+def selection_label(market: Market, side: str, event: Event) -> str:
     if market.player:
         return f"{market.player} {side}"
     if side in (event.home_team, event.away_team):
@@ -114,7 +109,7 @@ def scan(
             continue
         if market_type and market.market_type != market_type:
             continue
-        key = _line_key(market.market_type, snap.side, snap.line, event.home_team)
+        key = line_key(market.market_type, snap.side, snap.line, event.home_team)
         groups[(market.id, key)][snap.book][snap.side] = (snap.price, snap.line)
         context[market.id] = (market, event)
 
@@ -153,7 +148,7 @@ def scan(
                         event_label=matchup(event.away_team, event.home_team),
                         kickoff=as_utc(event.kickoff),
                         market_type=market.market_type,
-                        selection=_selection(market, side, event),
+                        selection=selection_label(market, side, event),
                         line=line,
                         book=book,
                         price=price,

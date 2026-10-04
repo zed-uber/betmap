@@ -13,6 +13,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from betmap.config import get_settings
+from betmap.data import nflverse
+from betmap.data.nflverse import StatsUnavailable
 from betmap.db import init_db, make_engine, session_scope
 from betmap.odds.client import OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
@@ -20,12 +22,14 @@ from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction
 from betmap.odds.scan import DEVIG_CHOICES, last_pull_at, scan
 from betmap.tables import Bet, BetStatus
 from betmap.tracking import ledger
+from betmap.tracking.results import Fetch, update_results
 
 HERE = Path(__file__).parent
 MARKET_TYPES = [
     "h2h",
     "spreads",
     "totals",
+    "team_totals",
     "player_pass_yds",
     "player_rush_yds",
     "player_reception_yds",
@@ -106,8 +110,10 @@ def equity_curve(bets: list[Bet], width: int = 600, height: int = 120) -> dict |
 def create_app(
     engine: Engine | None = None,
     odds_client: Callable[[], OddsApiClient] | None = None,
+    results_fetch: Fetch | None = None,
 ) -> FastAPI:
     engine = engine or make_engine()
+    results_fetch = results_fetch or nflverse.fetch
     odds_client = odds_client or (lambda: OddsApiClient(get_settings().odds_api_key))
     init_db(engine)
 
@@ -318,6 +324,16 @@ def create_app(
         except ValueError as e:
             return redirect("/", error=f"Couldn't settle bet: {e}")
         return redirect("/", msg=f"Settled #{bet.id} as {bet.status}: {bet.profit:+.2f}")
+
+    @app.post("/results/sync")
+    def sync_results(session: SessionDep):
+        try:
+            update = update_results(session, fetch=results_fetch)
+        except (StatsUnavailable, httpx.HTTPError, OSError) as e:
+            return redirect("/", error=f"Couldn't sync results: {e}")
+        if update.needs_manual:
+            return redirect("/", error=update.summary())
+        return redirect("/", msg=update.summary())
 
     @app.post("/bankroll")
     def transfer(

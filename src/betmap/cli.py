@@ -6,6 +6,7 @@ from rich.table import Table
 from sqlalchemy import select
 
 from betmap.config import get_settings
+from betmap.data.nflverse import StatsUnavailable
 from betmap.db import init_db, make_engine, session_scope
 from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
@@ -13,6 +14,7 @@ from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction
 from betmap.odds.scan import last_pull_at, scan
 from betmap.tables import Bet, BetStatus
 from betmap.tracking import ledger
+from betmap.tracking.results import update_results
 
 app = typer.Typer(
     help="NFL betting tracker, EV finder, and portfolio optimizer.", no_args_is_help=True
@@ -23,6 +25,8 @@ app.add_typer(bet_app, name="bet")
 app.add_typer(bankroll_app, name="bankroll")
 odds_app = typer.Typer(help="Pull odds and scan for +EV prices.", no_args_is_help=True)
 app.add_typer(odds_app, name="odds")
+results_app = typer.Typer(help="Game results, auto-settlement, and CLV.", no_args_is_help=True)
+app.add_typer(results_app, name="results")
 
 console = Console()
 
@@ -148,9 +152,8 @@ def bet_settle(
     with session_scope() as s:
         bet = ledger.settle_bet(s, bet_id, result, closing)
     console.print(f"Bet #{bet.id} settled as {bet.status}: {bet.profit:+.2f}")
-    if bet.closing_price:
-        clv = bet.price / bet.closing_price - 1
-        console.print(f"  CLV vs closing price: {clv:+.1%}")
+    if bet.clv is not None:
+        console.print(f"  CLV: {bet.clv:+.1%}")
 
 
 @app.command()
@@ -164,6 +167,12 @@ def report() -> None:
     table.add_row("Record (W-L-P)", f"{summary.wins}-{summary.losses}-{summary.pushes}")
     table.add_row("ROI", "n/a" if summary.roi is None else f"{summary.roi:+.1%}")
     table.add_row("Open bets", f"{summary.open_bets} ({summary.open_exposure:.2f} at risk)")
+    if summary.avg_clv is not None:
+        table.add_row(
+            "Avg CLV",
+            f"{summary.avg_clv:+.1%} over {len(summary.clv_values)} bets, "
+            f"{summary.beat_close:.0%} beat the close",
+        )
     if summary.expected_profit_open is not None:
         table.add_row("Expected P/L on open", f"{summary.expected_profit_open:+.2f}")
     table.add_row("Available bankroll", f"{summary.bankroll:.2f}")
@@ -266,6 +275,43 @@ def odds_scan(
             f"{o.kelly * equity:.2f}" if equity > 0 else f"{o.kelly:.2%}",
         )
     console.print(table if opps else "No prices above the EV threshold.")
+
+
+@results_app.command("sync")
+def results_sync(
+    seasons: Annotated[
+        str, typer.Option(help="Comma-separated seasons; default is the current one")
+    ] = "",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show grades without settling")
+    ] = False,
+) -> None:
+    """Sync scores and box scores from nflverse, record closing lines, settle finished bets."""
+    season_list = [int(s) for s in split_csv(seasons)] or None
+    try:
+        with session_scope() as s:
+            update = update_results(s, seasons=season_list, dry_run=dry_run)
+            rows = [
+                (o.bet.id, o.bet.event_label, o.bet.selection, o.status, o.reason, o.needs_manual)
+                for o in update.outcomes
+            ]
+    except StatsUnavailable as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    console.print(
+        f"Synced {update.games} games, {update.player_lines} player lines; "
+        f"recorded {update.closing_lines} closing lines"
+    )
+    if not rows:
+        console.print("No open bets.")
+        return
+    table = Table(title="Open bets" + (" (dry run)" if dry_run else ""))
+    for col in ("ID", "Event", "Selection", "Result", "Note"):
+        table.add_column(col)
+    for bet_id, event, selection, status, reason, manual in rows:
+        result = status or ("[yellow]manual[/]" if manual else "[dim]pending[/]")
+        table.add_row(str(bet_id), event, selection, result, reason)
+    console.print(table)
 
 
 @app.command()
