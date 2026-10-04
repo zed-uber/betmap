@@ -31,6 +31,7 @@ def place_bet(
     line: float | None = None,
     fair_prob: float | None = None,
     notes: str | None = None,
+    market_id: int | None = None,
 ) -> Bet:
     if stake <= 0:
         raise ValueError("stake must be positive")
@@ -46,6 +47,7 @@ def place_bet(
         stake=stake,
         fair_prob=fair_prob,
         notes=notes,
+        market_id=market_id,
     )
     session.add(bet)
     session.flush()

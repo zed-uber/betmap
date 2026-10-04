@@ -21,12 +21,27 @@ def decimal_to_american(decimal: float) -> float:
     return (decimal - 1) * 100 if decimal >= 2 else -100 / (decimal - 1)
 
 
+def contract_to_decimal(price: float) -> float:
+    """Prediction-market contract price (cost to win $1) to decimal odds, before fees."""
+    if not 0 < price < 1:
+        raise ValueError(f"invalid contract price: {price}")
+    return 1 / price
+
+
 def parse_odds(text: str) -> float:
-    """Parse '+150', '-110' as American, '2.5' as decimal; return decimal odds."""
+    """Parse odds and return decimal odds.
+
+    '+150', '-110' are American; '2.5' is decimal; '0.57', '57c' or '57¢' is a
+    prediction-market contract price (decimal odds are always > 1, so 0-1 is unambiguous).
+    """
     text = text.strip()
+    if text.lower().endswith(("c", "¢")):
+        return contract_to_decimal(float(text[:-1]) / 100)
     value = float(text)
     if text.startswith(("+", "-")) or abs(value) >= 100:
         return american_to_decimal(value)
+    if 0 < value < 1:
+        return contract_to_decimal(value)
     if value <= 1:
         raise ValueError(f"invalid odds: {text}")
     return value

@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{# Marks the field the last submit rejected. #}
+{% macro invalid(name) %}{% if prefill.invalid == name %} aria-invalid="true" autofocus{% endif %}{% endmacro %}
 {% block content %}
 {% set s = summary %}
 <section class="cards">
@@ -50,21 +52,22 @@
 </section>
 
 <div class="split">
-  <section class="panel">
+  <section class="panel" id="log">
     <h2>Log a bet</h2>
     <form method="post" action="/bets" class="grid-form">
-      <label>Event <input name="event" required placeholder="KC @ BUF"></label>
+      <label>Event <input name="event" value="{{ prefill.event }}" required placeholder="KC @ BUF"></label>
       <label>Market
-        <input name="market" required list="markets" placeholder="spreads">
+        <input name="market" value="{{ prefill.market }}" required list="markets" placeholder="spreads">
         <datalist id="markets">{% for m in market_types %}<option value="{{ m }}">{% endfor %}</datalist>
       </label>
-      <label>Selection <input name="selection" required placeholder="BUF"></label>
-      <label>Line <input name="line" inputmode="decimal" placeholder="-2.5"></label>
-      <label>Odds <input name="odds" required placeholder="-110 or 1.91"></label>
-      <label>Stake <input name="stake" required inputmode="decimal" placeholder="50"></label>
-      <label>Book <input name="book" required placeholder="dk"></label>
-      <label>Fair prob <input name="fair_prob" inputmode="decimal" placeholder="0.54 (optional)"></label>
-      <label class="wide">Notes <input name="notes"></label>
+      <label>Selection <input name="selection" value="{{ prefill.selection }}" required placeholder="BUF"></label>
+      <label>Line <input name="line" value="{{ prefill.line }}"{{ invalid("line") }} inputmode="decimal" placeholder="-2.5"></label>
+      <label>Odds <input name="odds" value="{{ prefill.odds }}"{{ invalid("odds") }} required placeholder="-110, 1.91, or 57c"></label>
+      <label>Stake <input name="stake" value="{{ prefill.stake }}"{{ invalid("stake") }} required inputmode="decimal" placeholder="50"></label>
+      <label>Book <input name="book" value="{{ prefill.book }}" required placeholder="dk"></label>
+      <label>Fair prob <input name="fair_prob" value="{{ prefill.fair_prob }}"{{ invalid("fair_prob") }} inputmode="decimal" placeholder="0.54 (optional)"></label>
+      <label class="wide">Notes <input name="notes" value="{{ prefill.notes }}"></label>
+      <input type="hidden" name="market_id" value="{{ prefill.market_id }}">
       <button type="submit" class="primary wide">Log bet</button>
     </form>
     <p class="hint">With a fair probability, you'll see EV and a {{ '%g' % (kelly_mult * 100) }}%-Kelly stake suggestion.</p>
