@@ -31,8 +31,14 @@ def test_parse_odds():
     assert parse_odds("+150") == pytest.approx(2.5)
     assert parse_odds("150") == pytest.approx(2.5)
     assert parse_odds("1.91") == pytest.approx(1.91)
-    with pytest.raises(ValueError):
-        parse_odds("0.9")
+    for bad in ("1", "0", "1.0", "-50", "100c", "0c", "abc"):
+        with pytest.raises(ValueError):
+            parse_odds(bad)
+
+
+@pytest.mark.parametrize("text", ["0.57", ".57", "57c", "57¢", " 57C "])
+def test_parse_contract_price(text):
+    assert parse_odds(text) == pytest.approx(1 / 0.57)
 
 
 @pytest.mark.parametrize("method", ["multiplicative", "power", "shin"])

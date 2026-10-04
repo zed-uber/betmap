@@ -7,7 +7,10 @@ from sqlalchemy import select
 
 from betmap.config import get_settings
 from betmap.db import init_db, make_engine, session_scope
+from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
+from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
+from betmap.odds.scan import last_pull_at, scan
 from betmap.tables import Bet, BetStatus
 from betmap.tracking import ledger
 
@@ -18,6 +21,8 @@ bet_app = typer.Typer(help="Log, list, and settle bets.", no_args_is_help=True)
 bankroll_app = typer.Typer(help="Deposits and withdrawals.", no_args_is_help=True)
 app.add_typer(bet_app, name="bet")
 app.add_typer(bankroll_app, name="bankroll")
+odds_app = typer.Typer(help="Pull odds and scan for +EV prices.", no_args_is_help=True)
+app.add_typer(odds_app, name="odds")
 
 console = Console()
 
@@ -56,7 +61,9 @@ def bet_add(
     event: Annotated[str, typer.Option(help='Event label, e.g. "KC @ BUF"')],
     market: Annotated[str, typer.Option(help="h2h, spreads, totals, player_pass_yds, ...")],
     selection: Annotated[str, typer.Option(help='e.g. "BUF", "Over", "Josh Allen Over"')],
-    odds: Annotated[str, typer.Option(help="American (-110, +150) or decimal (1.91)")],
+    odds: Annotated[
+        str, typer.Option(help="American (-110), decimal (1.91), or contract price (0.57, 57c)")
+    ],
     stake: Annotated[float, typer.Option()],
     book: Annotated[str, typer.Option()],
     line: Annotated[float | None, typer.Option()] = None,
@@ -162,6 +169,103 @@ def report() -> None:
     table.add_row("Available bankroll", f"{summary.bankroll:.2f}")
     table.add_row("Equity", f"{summary.equity:.2f}")
     console.print(table)
+
+
+def split_csv(value: str) -> tuple[str, ...]:
+    return tuple(v.strip() for v in value.split(",") if v.strip())
+
+
+@odds_app.command("pull")
+def odds_pull(
+    markets: Annotated[str, typer.Option(help="Game markets, comma-separated")] = ",".join(
+        GAME_MARKETS
+    ),
+    props: Annotated[
+        str, typer.Option(help="Prop markets, e.g. player_pass_yds; costs credits per event")
+    ] = "",
+    regions: Annotated[str, typer.Option(help="Odds API regions: us, us2, eu, ...")] = "us",
+    days: Annotated[float, typer.Option(help="Only games kicking off within this many days")] = 7,
+) -> None:
+    """Fetch current odds from The Odds API and store a snapshot."""
+    try:
+        client = OddsApiClient(get_settings().odds_api_key)
+        with session_scope() as s:
+            n_events, n_snaps = pull_odds(
+                s,
+                client,
+                markets=split_csv(markets),
+                props=split_csv(props),
+                regions=regions,
+                days=days,
+            )
+    except OddsApiError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"Stored {n_snaps} prices across {n_events} games")
+    q = client.quota
+    console.print(f"  Credits: {client.credits_spent} spent, {q.remaining} remaining this month")
+
+
+@odds_app.command("scan")
+def odds_scan(
+    min_ev: Annotated[float, typer.Option(help="Minimum EV per unit staked")] = 0.01,
+    min_books: Annotated[int, typer.Option(help="Books needed to form a consensus")] = 3,
+    method: Annotated[str, typer.Option(help="Devig: power, multiplicative, shin")] = "power",
+    market: Annotated[str | None, typer.Option(help="Only this market type")] = None,
+    all_books: Annotated[bool, typer.Option("--all-books", help="Ignore BETMAP_BOOKS")] = False,
+) -> None:
+    """List +EV prices from the latest odds pull."""
+    settings = get_settings()
+    with session_scope() as s:
+        pulled = last_pull_at(s)
+        opps = scan(
+            s,
+            min_ev=min_ev,
+            min_books=min_books,
+            method=method,
+            market_type=market,
+            books=None if all_books else settings.book_set,
+            kelly_mult=settings.kelly_fraction,
+            max_bet_fraction=settings.max_bet_fraction,
+        )
+        equity = ledger.summarize(s).equity
+    if pulled is None:
+        console.print("No odds yet; run [bold]betmap odds pull[/] first.")
+        return
+    table = Table(title=f"+EV prices (odds as of {pulled.astimezone():%a %H:%M})")
+    for col in (
+        "Kickoff",
+        "Event",
+        "Market",
+        "Selection",
+        "Line",
+        "Book",
+        "Odds",
+        "Fair",
+        "EV",
+        "Books",
+        "Stake",
+    ):
+        table.add_column(col)
+    for o in opps:
+        table.add_row(
+            f"{o.kickoff.astimezone():%a %H:%M}",
+            o.event_label,
+            o.market_type,
+            o.selection,
+            ""
+            if o.line is None
+            else f"{o.line:+g}"
+            if o.market_type.endswith("spreads")
+            else f"{o.line:g}",
+            o.book,
+            f"{decimal_to_american(o.price):+.0f}",
+            f"{decimal_to_american(1 / o.fair_prob):+.0f}",
+            f"{o.ev:+.1%}",
+            str(o.n_books),
+            f"{o.kelly * equity:.2f}" if equity > 0 else f"{o.kelly:.2%}",
+        )
+    console.print(table if opps else "No prices above the EV threshold.")
 
 
 @app.command()

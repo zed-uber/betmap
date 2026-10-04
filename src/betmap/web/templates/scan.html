@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Scan · betmap{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Odds
+    <span class="muted">{% if last_pull %}as of {{ last_pull | local }}{% else %}none pulled yet{% endif %}</span>
+    <form method="post" action="/odds/pull" class="inline more">
+      <button type="submit" class="primary" {% if not has_key %}disabled title="Set BETMAP_ODDS_API_KEY in .env"{% endif %}>Pull game lines</button>
+    </form>
+  </h2>
+  <p class="hint">A pull fetches moneyline, spread and total for games in the next 7 days (3 credits).
+    Props: <code>betmap odds pull --props player_pass_yds,...</code></p>
+</section>
+
+<section class="panel">
+  <form method="get" action="/scan" class="filter-form">
+    <label>Min EV <input name="min_ev" value="{{ f.min_ev }}" inputmode="decimal" size="5"></label>
+    <label>Min books <input name="min_books" value="{{ f.min_books }}" inputmode="numeric" size="3"></label>
+    <label>Devig
+      <select name="method">{% for m in methods %}<option {% if m == f.method %}selected{% endif %}>{{ m }}</option>{% endfor %}</select>
+    </label>
+    <label>Market
+      <input name="market" value="{{ f.market }}" list="scan-markets" placeholder="any" size="12">
+      <datalist id="scan-markets">{% for m in markets %}<option value="{{ m }}">{% endfor %}</datalist>
+    </label>
+    {% if book_filter %}
+    <label class="check"><input type="checkbox" name="all_books" value="true" {% if f.all_books %}checked{% endif %}> all books</label>
+    {% endif %}
+    <button type="submit">Apply</button>
+  </form>
+  {% if book_filter and not f.all_books %}<p class="hint">Showing your books: {{ book_filter | join(", ") }}</p>{% endif %}
+
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Kickoff</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Line</th>
+      <th>Book</th><th class="num">Odds</th><th class="num">Next best</th><th class="num">Fair</th>
+      <th class="num">EV</th><th class="num">Books</th><th class="num">Stake</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}{% set o = r.o %}
+      <tr>
+        <td>{{ o.kickoff | local }}</td>
+        <td>{{ o.event_label }}</td>
+        <td><span class="tag">{{ o.market_type }}</span></td>
+        <td>{{ o.selection }}</td>
+        <td class="num">{% if o.line is not none %}{{ ('%+g' if o.market_type.endswith('spreads') else '%g') % o.line }}{% endif %}</td>
+        <td>{{ o.book }}</td>
+        <td class="num">{{ o.price | american }}</td>
+        <td class="num muted">{{ o.best_other | american if o.best_other else '' }}</td>
+        <td class="num muted">{{ (1 / o.fair_prob) | american }}</td>
+        <td class="num pos">{{ o.ev | pct }}</td>
+        <td class="num">{{ o.n_books }}</td>
+        <td class="num">{{ r.stake | money if r.stake is not none else (o.kelly * 100) | round(2) ~ '%' }}</td>
+        <td><a href="{{ r.log_url }}#log">Log</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint">Fair = devigged consensus of books quoting both sides at that line. Stake = {{ '%g' % (kelly_mult * 100) }}%-Kelly on equity, capped.</p>
+  {% elif last_pull %}<p class="muted">No prices at or above {{ '%g' % (f.min_ev * 100) }}% EV.</p>
+  {% else %}<p class="muted">Pull odds to scan for value.</p>{% endif %}
+</section>
+{% endblock %}

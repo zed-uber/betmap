@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     max_bet_fraction: float = 0.03
     max_game_fraction: float = 0.06
 
+    # Comma-separated Odds API book keys you can bet at (e.g. "draftkings,fanduel").
+    # Empty means report every book. All books still feed the consensus.
+    books: str = ""
+
+    @property
+    def book_set(self) -> set[str]:
+        return {b.strip() for b in self.books.split(",") if b.strip()}
+
 
 @lru_cache
 def get_settings() -> Settings:
