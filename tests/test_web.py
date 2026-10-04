@@ -200,3 +200,25 @@ def test_sync_results_reports_missing_stats_extra():
 
     client = TestClient(create_app(shared_engine(), results_fetch=fetch))
     assert "Couldn" in client.post("/results/sync").text
+
+
+def test_portfolio_page():
+    client = TestClient(create_app(shared_engine(), odds_client=fake_odds_client))
+    r = client.get("/portfolio")
+    assert r.status_code == 200 and "No scan prices" in r.text
+
+    client.post("/bankroll", data={"kind": "deposit", "amount": "1000"})
+    client.post("/odds/pull")
+    r = client.get("/portfolio")
+    assert "BUF spreads -2.5 @ soft" in r.text and 'href="/?' in r.text  # sized, with Log
+
+    # An open BUF moneyline already carries that risk: the spread is sized to 0.
+    client.post("/bets", data=bet_form(market="h2h", line="", fair_prob="0.55"))
+    r = client.get("/portfolio")
+    assert 'href="/?' not in r.text and '<span class="muted">0</span>' in r.text
+    assert "KC @ BUF" in r.text and "50.00" in r.text  # at risk by game
+
+    # Two open bets on the same side of one game are flagged as overlapping.
+    client.post("/bets", data=bet_form(fair_prob="0.55"))
+    r = client.get("/portfolio")
+    assert "Overlapping bets" in r.text and "#1 BUF h2h" in r.text and "#2 BUF spreads" in r.text
