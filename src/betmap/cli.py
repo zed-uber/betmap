@@ -1,3 +1,4 @@
+from statistics import fmean
 from typing import Annotated
 
 import typer
@@ -6,17 +7,19 @@ from rich.table import Table
 from sqlalchemy import select
 
 from betmap.backtest.games import backtest
+from betmap.backtest.props import backtest_props
 from betmap.config import get_settings
 from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
 from betmap.db import init_db, make_engine, session_scope
+from betmap.models.evaluate import evaluate
 from betmap.models.game_model import ModelConfig
-from betmap.models.predict import load_predictions, predict_upcoming
+from betmap.models.predict import load_predictions, predict_props, predict_upcoming
 from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
 from betmap.odds.scan import last_pull_at, scan
-from betmap.tables import Bet, BetStatus
+from betmap.tables import Bet, BetStatus, Market
 from betmap.tracking import ledger
 from betmap.tracking.results import update_results
 
@@ -424,16 +427,100 @@ def model_predict(
     margin_sd: MarginSd = _defaults.margin_sd,
     total_sd: TotalSd = _defaults.total_sd,
 ) -> None:
-    """Store model probabilities for upcoming games' lines in the latest odds pull."""
+    """Store model probabilities for upcoming lines (games and player props) in the latest pull."""
     season = nflverse.current_season()
     try:
         rows = nflverse.fetch_schedules(list(range(season - train_years, season + 1)))
+        with session_scope() as s:
+            n = predict_upcoming(s, rows, model_config(half_life, ridge, margin_sd, total_sd))
+            has_props = s.scalar(select(Market.id).where(Market.player.is_not(None)).limit(1))
+        console.print(f"Stored {n} game-line predictions")
+        if has_props:
+            # Two seasons covers each player's recent games and each defense's last 16.
+            stats = nflverse.fetch_player_stats([season - 1, season])
+            with session_scope() as s:
+                n_props, unmatched = predict_props(s, stats)
+            console.print(f"Stored {n_props} prop predictions")
+            if unmatched:
+                console.print(
+                    f"[yellow]Couldn't match {len(unmatched)} players to nflverse:[/] "
+                    + ", ".join(unmatched[:10])
+                    + (" ..." if len(unmatched) > 10 else "")
+                )
     except StatsUnavailable as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
+    console.print("Use them with: betmap odds scan --model-weight 0.25")
+
+
+@model_app.command("backtest-props")
+def model_backtest_props(
+    seasons: Annotated[str, typer.Option(help="Test seasons, e.g. 2024-2025")] = "2024-2025",
+    train_years: Annotated[int, typer.Option(help="Seasons of history before the test")] = 2,
+) -> None:
+    """Walk-forward accuracy and calibration of the prop model (no lines needed)."""
+    test = parse_seasons(seasons)
+    try:
+        rows = nflverse.fetch_player_stats(list(range(min(test) - train_years, max(test) + 1)))
+    except StatsUnavailable as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    reports = backtest_props(rows, test)
+    if not reports:
+        console.print("No player games to test in those seasons.")
+        return
+    table = Table(title="Prop model vs a player's plain 8-game average (lower MAE is better)")
+    for col in ("Market", "N", "MAE model", "MAE avg", "In 50%", "In 80%", "Calibration"):
+        table.add_column(col)
+    for market, r in sorted(reports.items()):
+        calibration = "  ".join(
+            f"{fmean(b.predicted):.0%}→{b.actual:.0%}" for b in r.buckets.values() if b.n >= 30
+        )
+        table.add_row(
+            market.removeprefix("player_"),
+            str(r.n),
+            f"{r.mae_model:.2f}",
+            f"{r.mae_baseline:.2f}",
+            f"{r.in_50 / r.n:.0%}",
+            f"{r.in_80 / r.n:.0%}",
+            calibration,
+        )
+    console.print(table)
+    console.print(
+        "[dim]Calibration: predicted P(over) → how often it went over, against a stand-in "
+        "line at the player's recent average. Intervals over-cover on low counts because "
+        "stats are whole numbers. Beating a plain average is not beating the books: see "
+        "`betmap model evaluate`.[/]"
+    )
+
+
+@model_app.command("evaluate")
+def model_evaluate() -> None:
+    """Forward test: stored pre-game predictions vs the closing line, on final games."""
     with session_scope() as s:
-        n = predict_upcoming(s, rows, model_config(half_life, ridge, margin_sd, total_sd))
-    console.print(f"Stored {n} predictions. Use them with: betmap odds scan --model-weight 0.25")
+        result = evaluate(s)
+    if not result.groups:
+        console.print(
+            "Nothing to evaluate yet. It needs `model predict` before kickoff, an odds pull "
+            "within 6h of kickoff, and `results sync` after the game."
+        )
+    else:
+        table = Table(title="Brier score vs the devigged closing line (lower is better)")
+        for col in ("Model", "Market", "N", "Model", "Closing line", "Verdict"):
+            table.add_column(col)
+        for (model, market), g in sorted(result.groups.items()):
+            better = g.brier_model < g.brier_market
+            verdict = "beats close" if better else "worse than close"
+            if g.n < 200:
+                verdict += " (too few to trust)"
+            table.add_row(
+                model, market, str(g.n), f"{g.brier_model:.4f}", f"{g.brier_market:.4f}", verdict
+            )
+        console.print(table)
+    console.print(
+        f"[dim]{result.pending} waiting on results, {result.no_close} without a closing "
+        "consensus to compare against.[/]"
+    )
 
 
 @app.command()
