@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Edit #{{ bet.id }} · betmap{% endblock %}
+{# Marks the field the last save rejected. #}
+{% macro invalid(name) %}{% if prefill.invalid == name %} aria-invalid="true" autofocus{% endif %}{% endmacro %}
+{% block content %}
+<section class="panel narrow">
+  <h2>Edit bet #{{ bet.id }}
+    <span class="muted">placed {{ bet.placed_at.strftime('%b %d') }}{% if bet.settled_at %} · settled {{ bet.settled_at.strftime('%b %d') }}{% endif %}</span>
+    <a class="more" href="/bets">← all bets</a>
+  </h2>
+  <form method="post" action="/bets/{{ bet.id }}/edit" class="grid-form">
+    <label>Event <input name="event" value="{{ prefill.event }}" required></label>
+    <label>Market
+      <input name="market" value="{{ prefill.market }}" required list="markets">
+      <datalist id="markets">{% for m in market_types %}<option value="{{ m }}">{% endfor %}</datalist>
+    </label>
+    <label>Selection <input name="selection" value="{{ prefill.selection }}" required></label>
+    <label>Line <input name="line" value="{{ prefill.line }}"{{ invalid("line") }} inputmode="decimal"></label>
+    <label>Odds <input name="odds" value="{{ prefill.odds }}"{{ invalid("odds") }} required></label>
+    <label>Stake <input name="stake" value="{{ prefill.stake }}"{{ invalid("stake") }} required inputmode="decimal"></label>
+    <label>Book <input name="book" value="{{ prefill.book }}" required></label>
+    <label>Fair prob <input name="fair_prob" value="{{ prefill.fair_prob }}"{{ invalid("fair_prob") }} inputmode="decimal"></label>
+    <label>Result
+      <select name="status">
+        {% for st in statuses %}<option value="{{ st }}" {% if st == prefill.status %}selected{% endif %}>{{ st }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="wide">Notes <input name="notes" value="{{ prefill.notes }}"></label>
+    <button type="submit" class="primary wide">Save</button>
+  </form>
+  <p class="hint">Changing the result recomputes the payout; "open" un-settles the bet. Changing the
+    event, market, selection, or line clears its game link and closing line, which the next
+    results sync works out again.</p>
+</section>
+{% endblock %}

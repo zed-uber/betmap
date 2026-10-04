@@ -222,3 +222,58 @@ def test_portfolio_page():
     client.post("/bets", data=bet_form(fair_prob="0.55"))
     r = client.get("/portfolio")
     assert "Overlapping bets" in r.text and "#1 BUF h2h" in r.text and "#2 BUF spreads" in r.text
+
+
+def test_settle_requires_a_result(client):
+    client.post("/bets", data=bet_form())
+    r = client.get("/")
+    assert '<option value="" selected disabled>result' in r.text
+    r = client.post("/bets/1/settle", data={"result": ""})
+    assert "pick win, loss, push, or void" in r.text
+    assert "No open bets" not in r.text  # still open
+
+
+def test_edit_bet_page_and_save(client):
+    client.post(
+        "/bets",
+        data=bet_form(
+            market="totals_h1",
+            selection="Over",
+            line="21.5",
+            odds="57c",
+            stake="100",
+            book="Robinhood",
+        ),
+    )
+    client.post("/bets/1/settle", data={"result": "win"})  # the mistake
+
+    r = client.get("/bets")
+    assert 'href="/bets/1/edit"' in r.text
+    r = client.get("/bets/1/edit")
+    assert 'value="totals_h1"' in r.text and 'value="21.5"' in r.text
+    assert '<option value="win" selected>' in r.text
+
+    form = bet_form(
+        market="totals_h1", selection="Over", line="21.5", odds="57c", stake="100", book="Robinhood"
+    ) | {"status": "loss"}
+    r = client.post("/bets/1/edit", data=form)
+    assert "Saved #1: Over (loss -100.00)" in r.text
+    assert 'class="status status-loss"' in r.text
+
+    r = client.post("/bets/1/edit", data=form | {"status": "open"})
+    assert "Saved #1: Over (open)" in r.text
+
+
+def test_edit_bet_bad_input_keeps_values(client):
+    client.post("/bets", data=bet_form())
+    form = bet_form(odds="57%", notes="typo here") | {"status": "open"}
+    r = client.post("/bets/1/edit", data=form)
+    assert r.url.path == "/bets/1/edit"
+    assert "Couldn" in r.text and "odds must be" in r.text
+    assert 'name="odds" value="57%" aria-invalid="true"' in unescape(r.text)
+    assert 'value="typo here"' in r.text
+    assert "-105" in client.get("/bets").text  # unchanged
+
+
+def test_edit_missing_bet(client):
+    assert "No bet #9" in client.get("/bets/9/edit").text

@@ -86,3 +86,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 code { background: var(--tag-bg); border-radius: 4px; padding: .05rem .3rem; font-size: .85em; }
 input[aria-invalid="true"] { border-color: var(--neg); background: var(--err-bg);
   outline-color: var(--neg); }
+.panel.narrow { max-width: 760px; }
+form.inline a.edit { align-self: center; font-size: .85rem; margin-left: .25rem; }

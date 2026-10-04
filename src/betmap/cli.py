@@ -172,6 +172,50 @@ def bet_settle(
         console.print(f"  CLV: {bet.clv:+.1%}")
 
 
+@bet_app.command("edit")
+def bet_edit(
+    bet_id: int,
+    event: Annotated[str | None, typer.Option()] = None,
+    market: Annotated[str | None, typer.Option()] = None,
+    selection: Annotated[str | None, typer.Option()] = None,
+    line: Annotated[float | None, typer.Option()] = None,
+    odds: Annotated[str | None, typer.Option(help="American, decimal, or contract price")] = None,
+    stake: Annotated[float | None, typer.Option()] = None,
+    book: Annotated[str | None, typer.Option()] = None,
+    fair_prob: Annotated[float | None, typer.Option(help="0-1")] = None,
+    notes: Annotated[str | None, typer.Option()] = None,
+    status: Annotated[
+        BetStatus | None, typer.Option(help="win, loss, push, void, or open to un-settle")
+    ] = None,
+) -> None:
+    """Correct a bet. Only the options you pass change; a new status recomputes the payout."""
+    changes = {
+        "event_label": event,
+        "market_type": market,
+        "selection": selection,
+        "line": line,
+        "price": parse_odds(odds) if odds else None,
+        "stake": stake,
+        "book": book,
+        "fair_prob": fair_prob,
+        "notes": notes,
+        "status": status,
+    }
+    changes = {k: v for k, v in changes.items() if v is not None}
+    if not changes:
+        console.print("Nothing to change; pass at least one option (see --help).")
+        raise typer.Exit(1)
+    try:
+        with session_scope() as s:
+            bet = ledger.edit_bet(s, bet_id, **changes)
+            result = "open" if bet.status == BetStatus.OPEN else f"{bet.status}, {bet.profit:+.2f}"
+            label = f"{bet.event_label} {bet.selection} {fmt_odds(bet.price)} for {bet.stake:.2f}"
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"Bet #{bet_id}: {label} ({result})")
+
+
 @app.command()
 def report() -> None:
     """Bankroll and performance summary."""
