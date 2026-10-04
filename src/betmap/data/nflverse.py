@@ -27,6 +27,7 @@ STAT_COLUMNS = [
     "player_display_name",
     "position",
     "team",
+    "opponent_team",
     "season",
     "week",
     "completions",
@@ -61,6 +62,12 @@ def _nflreadpy():
 
 def fetch_schedules(seasons: list[int]) -> list[dict]:
     return _nflreadpy().load_schedules(seasons).to_dicts()
+
+
+def fetch_player_stats(seasons: list[int]) -> list[dict]:
+    """Weekly player stat rows, skipping nflverse's blank placeholder rows."""
+    stats = _nflreadpy().load_player_stats(seasons, summary_level="week")
+    return [r for r in stats.select(STAT_COLUMNS).to_dicts() if r["player_id"]]
 
 
 def fetch(seasons: list[int]) -> tuple[list[dict], list[dict]]:

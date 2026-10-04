@@ -62,39 +62,54 @@ def _is_bet_side(bet: Bet, side: str, market: Market, event: Event) -> bool:
     return team is not None and side == (event.home_team if team == "home" else event.away_team)
 
 
-def closing_line(
-    session: Session, bet: Bet, event: Event, method: str = "power"
-) -> ClosingLine | None:
+def closing_quotes(session: Session, market: Market, event: Event) -> list[OddsSnapshot]:
+    """Quotes from the last pull before kickoff, if it was close enough to count."""
     if event.kickoff is None:
-        return None
-    market = find_market(session, bet, event)
-    if market is None:
-        return None
+        return []
     kickoff = as_utc(event.kickoff)
     snaps = session.scalars(select(OddsSnapshot).where(OddsSnapshot.market_id == market.id)).all()
     pulls = [as_utc(s.fetched_at) for s in snaps if as_utc(s.fetched_at) <= kickoff]
     if not pulls or kickoff - max(pulls) > CLOSE_WINDOW:
-        return None
-    last = max(pulls)
-    quotes = [s for s in snaps if as_utc(s.fetched_at) == last]
+        return []
+    return [s for s in snaps if as_utc(s.fetched_at) == max(pulls)]
 
-    bet_side = next((s.side for s in quotes if _is_bet_side(bet, s.side, market, event)), None)
-    if bet_side is None:
-        return None
-    key = line_key(market.market_type, bet_side, bet.line, event.home_team)
+
+def consensus(
+    quotes: list[OddsSnapshot],
+    market: Market,
+    event: Event,
+    side: str,
+    line: float | None,
+    method: str = "power",
+) -> tuple[float | None, dict[str, dict[str, float]]]:
+    """Devigged consensus probability for `side` at `line`, and the quotes it came from."""
+    key = line_key(market.market_type, side, line, event.home_team)
     by_book: dict[str, dict[str, float]] = defaultdict(dict)
     for s in quotes:
         if line_key(market.market_type, s.side, s.line, event.home_team) == key:
             by_book[s.book][s.side] = s.price
-
-    sides = sorted({side for q in by_book.values() for side in q})
+    sides = sorted({s for q in by_book.values() for s in q})
     complete = [q for q in by_book.values() if len(sides) >= 2 and all(s in q for s in sides)]
-    fair = None
-    if len(complete) >= MIN_CLOSING_BOOKS:
-        i = sides.index(bet_side)
-        fair = fmean(devig([q[s] for s in sides], method)[i] for q in complete)
+    if side not in sides or len(complete) < MIN_CLOSING_BOOKS:
+        return None, by_book
+    i = sides.index(side)
+    return fmean(devig([q[s] for s in sides], method)[i] for q in complete), by_book
+
+
+def closing_line(
+    session: Session, bet: Bet, event: Event, method: str = "power"
+) -> ClosingLine | None:
+    market = find_market(session, bet, event)
+    if market is None:
+        return None
+    quotes = closing_quotes(session, market, event)
+    bet_side = next((s.side for s in quotes if _is_bet_side(bet, s.side, market, event)), None)
+    if bet_side is None:
+        return None
+    fair, by_book = consensus(quotes, market, event, bet_side, bet.line, method)
+    complete = sum(1 for q in by_book.values() if len(q) >= 2)
     own = by_book.get(bet.book.strip().lower(), {}).get(bet_side)
-    return ClosingLine(fair, own, len(complete), last)
+    return ClosingLine(fair, own, complete, max(s.fetched_at for s in quotes))
 
 
 def fill_closing_lines(session: Session) -> int:

@@ -116,11 +116,43 @@ reason. Treat a model edge as a reason to look closer, not to bet, until a backt
 otherwise. The default half-life (150 days) was chosen on the same seasons it's evaluated on,
 so even its small improvement is optimistic.
 
+### Player prop model
+
+```sh
+betmap model backtest-props [--seasons 2024-2025]
+betmap odds pull --markets "" --props player_reception_yds,player_rush_yds --days 2
+betmap model predict                       # game lines and props in the latest pull
+betmap odds scan --model-weight 0.25
+betmap model evaluate                      # forward test, once games are final
+```
+
+For each player and stat: a recency-weighted average of his recent games, shrunk toward
+his position's average, times how much the opponent allows to that position (also shrunk).
+A negative binomial around that mean gives P(over); TDs and interceptions use a Poisson.
+It models stats *given the player plays*, matching how books void props for inactive players.
+Prop names are matched to nflverse by name and team; `predict` lists any it can't match.
+
+**How it's tested.** nflverse has no historical prop lines, so the prop model can't be
+backtested against real prices for free (The Odds API sells historical props from 2023).
+Instead:
+
+- `backtest-props` checks accuracy and calibration walk-forward, scoring only players with
+  enough volume for a book to post the prop. Over 2024-2025 it beats a player's plain 8-game
+  average on most markets (e.g. receiving yards MAE 23.2 vs 24.2) and its probabilities are
+  roughly honest, though it underrates overs at the low end. Beating an average is a low bar;
+  books' lines are much better than that.
+- `evaluate` is the real test, for both models: every prediction stored before kickoff is
+  compared with the devigged closing line once the game is final. It fills in as you pull
+  odds (including props) during the season: run `model predict` after each pull, pull again
+  within 6 hours of kickoff for the close, and `results sync` after the games. Until a
+  market shows a lower Brier score than the close over a few hundred predictions, keep
+  `--model-weight` low or at 0.
+
 ## Roadmap
 
 1. ✅ Ledger, bankroll, odds math (devig: multiplicative/power/Shin, EV, Kelly)
 2. ✅ Odds API ingestion + best-price / devigged-consensus EV scan
 3. ✅ nflverse stats sync, auto-settlement, CLV tracking
 4. ✅ Game-line model + walk-forward backtest (no edge yet)
-5. Player prop models + backtest
+5. ✅ Player prop models + backtest (forward test accumulating)
 6. Portfolio: joint simulation, overlap detection, correlated fractional Kelly

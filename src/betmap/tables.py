@@ -148,6 +148,7 @@ class PlayerGameStat(Base):
     player_name: Mapped[str]
     position: Mapped[str | None]
     team: Mapped[str | None]
+    opponent_team: Mapped[str | None]
     season: Mapped[int]
     week: Mapped[int]
     completions: Mapped[int | None]
