@@ -10,6 +10,26 @@ cp .env.example .env   # add BETMAP_ODDS_API_KEY from the-odds-api.com
 .venv/bin/betmap init
 ```
 
+## Running
+
+`betmap` is installed into the project venv, so activate it first:
+
+```sh
+source .venv/bin/activate
+```
+
+Web dashboard:
+
+```sh
+betmap web            # add --reload while developing
+```
+
+Then open http://127.0.0.1:8000. Stop it with Ctrl+C. It listens on localhost only and has no
+login; pass `--host 0.0.0.0` to reach it from other devices on a trusted network.
+
+The CLI and web UI share the same SQLite database (`data/betmap.db` by default), so bets logged
+in one show up in the other.
+
 ## Usage
 
 ```sh
@@ -20,8 +40,6 @@ betmap bet list [--all]
 betmap bet settle 1 win --closing-odds -120
 betmap report
 ```
-
-Web dashboard: `betmap web` (add `--reload` while developing), then open http://127.0.0.1:8000.
 
 Odds accept American (`-110`, `+150`) or decimal (`1.91`) and are stored as decimal.
 
