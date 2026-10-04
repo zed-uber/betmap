@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}betmap{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">betmap</a>
+    <nav>
+      <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/bets" {% if request.url.path == '/bets' %}aria-current="page"{% endif %}>Bets</a>
+    </nav>
+  </header>
+  <main>
+    {% if error %}<p class="flash flash-error" role="alert">{{ error }}</p>{% endif %}
+    {% if msg %}<p class="flash flash-ok" role="status">{{ msg }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

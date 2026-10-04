@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+{% set s = summary %}
+<section class="cards">
+  <div class="card"><div class="label">Bankroll</div><div class="value">{{ s.bankroll | money }}</div>
+    <div class="sub">equity {{ s.equity | money }}</div></div>
+  <div class="card"><div class="label">Settled P/L</div>
+    <div class="value {{ 'pos' if s.settled_profit > 0 else 'neg' if s.settled_profit < 0 else '' }}">{{ s.settled_profit | signed }}</div>
+    <div class="sub">ROI {{ s.roi | pct if s.roi is not none else 'n/a' }}</div></div>
+  <div class="card"><div class="label">Record</div><div class="value">{{ s.wins }}-{{ s.losses }}-{{ s.pushes }}</div>
+    <div class="sub">W-L-P</div></div>
+  <div class="card"><div class="label">Open</div><div class="value">{{ s.open_exposure | money }}</div>
+    <div class="sub">{{ s.open_bets }} bet{{ '' if s.open_bets == 1 else 's' }}{% if s.expected_profit_open is not none %} · exp {{ s.expected_profit_open | signed }}{% endif %}</div></div>
+</section>
+
+{% if curve %}
+<section class="panel">
+  <h2>Settled P/L over time <span class="muted">{{ curve.last | signed }}</span></h2>
+  <div class="chart">
+    <svg viewBox="0 0 {{ curve.width }} {{ curve.height }}" preserveAspectRatio="none" role="img"
+         aria-label="Cumulative settled profit, now {{ curve.last | signed }}">
+      <line x1="0" x2="{{ curve.width }}" y1="{{ curve.zero_y }}" y2="{{ curve.zero_y }}" class="zero"/>
+      <polyline points="{{ curve.points }}" class="line"/>
+    </svg>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Open bets</h2>
+  {% if open_bets %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Placed</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Odds</th>
+      <th class="num">Stake</th><th>Book</th><th class="num">EV</th><th>Settle</th></tr></thead>
+    <tbody>
+    {% for b in open_bets %}
+      <tr>{% include "_bet_row.html" %}
+        <td><form method="post" action="/bets/{{ b.id }}/settle" class="inline">
+          <select name="result" aria-label="Result for bet {{ b.id }}">
+            {% for r in results %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+          </select>
+          <input name="closing_odds" placeholder="close" size="5" aria-label="Closing odds (optional)">
+          <button type="submit">Settle</button>
+        </form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No open bets.</p>{% endif %}
+</section>
+
+<div class="split">
+  <section class="panel">
+    <h2>Log a bet</h2>
+    <form method="post" action="/bets" class="grid-form">
+      <label>Event <input name="event" required placeholder="KC @ BUF"></label>
+      <label>Market
+        <input name="market" required list="markets" placeholder="spreads">
+        <datalist id="markets">{% for m in market_types %}<option value="{{ m }}">{% endfor %}</datalist>
+      </label>
+      <label>Selection <input name="selection" required placeholder="BUF"></label>
+      <label>Line <input name="line" inputmode="decimal" placeholder="-2.5"></label>
+      <label>Odds <input name="odds" required placeholder="-110 or 1.91"></label>
+      <label>Stake <input name="stake" required inputmode="decimal" placeholder="50"></label>
+      <label>Book <input name="book" required placeholder="dk"></label>
+      <label>Fair prob <input name="fair_prob" inputmode="decimal" placeholder="0.54 (optional)"></label>
+      <label class="wide">Notes <input name="notes"></label>
+      <button type="submit" class="primary wide">Log bet</button>
+    </form>
+    <p class="hint">With a fair probability, you'll see EV and a {{ '%g' % (kelly_mult * 100) }}%-Kelly stake suggestion.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Bankroll</h2>
+    <form method="post" action="/bankroll" class="grid-form">
+      <label>Type <select name="kind"><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option></select></label>
+      <label>Amount <input name="amount" required inputmode="decimal"></label>
+      <label class="wide">Book <input name="book" placeholder="optional"></label>
+      <button type="submit" class="wide">Record</button>
+    </form>
+    <dl class="facts">
+      <dt>Net deposits</dt><dd>{{ (s.deposits - s.withdrawals) | money }}</dd>
+    </dl>
+  </section>
+</div>
+
+{% if recent %}
+<section class="panel">
+  <h2>Recently settled <a class="more" href="/bets">all bets →</a></h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Placed</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Odds</th>
+      <th class="num">Stake</th><th>Book</th><th class="num">EV</th><th>Result</th><th class="num">P/L</th></tr></thead>
+    <tbody>
+    {% for b in recent %}
+      <tr>{% include "_bet_row.html" %}
+        <td><span class="status status-{{ b.status }}">{{ b.status }}</span></td>
+        <td class="num {{ 'pos' if b.profit > 0 else 'neg' if b.profit < 0 else '' }}">{{ b.profit | signed }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endblock %}
