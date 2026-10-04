@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Bets · betmap{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Bets</h2>
+  <nav class="filters" aria-label="Filter by status">
+    <a href="/bets" {% if not status %}aria-current="true"{% endif %}>all</a>
+    {% for st in statuses %}<a href="/bets?status={{ st }}" {% if status == st %}aria-current="true"{% endif %}>{{ st }}</a>{% endfor %}
+  </nav>
+  {% if bets %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Placed</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Odds</th>
+      <th class="num">Stake</th><th>Book</th><th class="num">EV</th><th>Status</th><th class="num">P/L</th>
+      <th class="num">Close</th><th class="num">CLV</th></tr></thead>
+    <tbody>
+    {% for b in bets %}
+      <tr>{% include "_bet_row.html" %}
+        <td><span class="status status-{{ b.status }}">{{ b.status }}</span></td>
+        <td class="num {% if b.profit is not none %}{{ 'pos' if b.profit > 0 else 'neg' if b.profit < 0 else '' }}{% endif %}">{{ b.profit | signed if b.profit is not none else '' }}</td>
+        <td class="num">{{ b.closing_price | american if b.closing_price else '' }}</td>
+        {% if b.closing_price %}{% set clv = b.price / b.closing_price - 1 %}
+        <td class="num {{ 'pos' if clv > 0 else 'neg' }}">{{ clv | pct }}</td>{% else %}<td></td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No bets{% if status %} with status “{{ status }}”{% endif %}.</p>{% endif %}
+</section>
+{% endblock %}

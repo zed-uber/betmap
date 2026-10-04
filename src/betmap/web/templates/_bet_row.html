@@ -1,0 +1,9 @@
+<td class="muted">{{ b.placed_at.strftime('%b %d') }}</td>
+<td>{{ b.event_label }}</td>
+<td><span class="tag">{{ b.market_type }}</span></td>
+<td>{{ b.selection }}{% if b.line is not none %} <span class="muted">{{ '%g' % b.line }}</span>{% endif %}</td>
+<td class="num">{{ b.price | american }}</td>
+<td class="num">{{ b.stake | money }}</td>
+<td>{{ b.book }}</td>
+{% set e = ev(b) %}
+<td class="num {% if e is not none %}{{ 'pos' if e > 0 else 'neg' }}{% endif %}">{{ e | pct if e is not none else '' }}</td>
