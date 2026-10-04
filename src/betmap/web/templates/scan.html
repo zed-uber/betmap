@@ -23,6 +23,8 @@
       <input name="market" value="{{ f.market }}" list="scan-markets" placeholder="any" size="12">
       <datalist id="scan-markets">{% for m in markets %}<option value="{{ m }}">{% endfor %}</datalist>
     </label>
+    <label title="Blend in the game model's probability (run `betmap model predict` first). The backtest shows no edge over closing lines, so keep this low.">Model weight
+      <input name="model_weight" value="{{ f.model_weight }}" inputmode="decimal" size="4"></label>
     {% if book_filter %}
     <label class="check"><input type="checkbox" name="all_books" value="true" {% if f.all_books %}checked{% endif %}> all books</label>
     {% endif %}
@@ -33,7 +35,7 @@
   {% if rows %}
   <div class="table-wrap"><table>
     <thead><tr><th>Kickoff</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Line</th>
-      <th>Book</th><th class="num">Odds</th><th class="num">Next best</th><th class="num">Fair</th>
+      <th>Book</th><th class="num">Odds</th><th class="num">Next best</th><th class="num">Fair</th>{% if f.model_weight %}<th class="num">Model</th>{% endif %}
       <th class="num">EV</th><th class="num">Books</th><th class="num">Stake</th><th></th></tr></thead>
     <tbody>
     {% for r in rows %}{% set o = r.o %}
@@ -47,6 +49,7 @@
         <td class="num">{{ o.price | american }}</td>
         <td class="num muted">{{ o.best_other | american if o.best_other else '' }}</td>
         <td class="num muted">{{ (1 / o.fair_prob) | american }}</td>
+        {% if f.model_weight %}<td class="num muted">{{ (1 / o.model_prob) | american if o.model_prob else '' }}</td>{% endif %}
         <td class="num pos">{{ o.ev | pct }}</td>
         <td class="num">{{ o.n_books }}</td>
         <td class="num">{{ r.stake | money if r.stake is not none else (o.kelly * 100) | round(2) ~ '%' }}</td>

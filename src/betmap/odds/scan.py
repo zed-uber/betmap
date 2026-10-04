@@ -7,14 +7,14 @@ probability of the *other* books (leave-one-out), so an outlier can't mask its o
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from statistics import fmean
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from betmap.odds.math import DEVIG_METHODS, devig, expected_value, kelly_fraction
-from betmap.tables import Event, Market, OddsSnapshot, utcnow
+from betmap.tables import Event, Market, OddsSnapshot, as_utc, utcnow
 from betmap.teams import abbr, matchup
 
 DEVIG_CHOICES = tuple(DEVIG_METHODS)
@@ -35,11 +35,7 @@ class Opportunity:
     n_books: int  # books in the consensus (excluding this one)
     best_other: float | None  # best price at any other book, for context
     kelly: float  # suggested bankroll fraction after multiplier and cap
-
-
-def as_utc(dt: datetime) -> datetime:
-    # SQLite hands back naive datetimes; everything is stored in UTC.
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    model_prob: float | None = None  # game model's probability, when one was blended in
 
 
 def last_pull_at(session: Session) -> datetime | None:
@@ -47,7 +43,7 @@ def last_pull_at(session: Session) -> datetime | None:
     return None if value is None else as_utc(value)
 
 
-def _line_key(market_type: str, side: str, line: float | None, home_team: str) -> float | None:
+def line_key(market_type: str, side: str, line: float | None, home_team: str) -> float | None:
     """Key that puts both sides of the same proposition together.
 
     Spread sides carry opposite signs (BUF -2.5 / KC +2.5), so key them from the home side.
@@ -59,7 +55,7 @@ def _line_key(market_type: str, side: str, line: float | None, home_team: str) -
     return line
 
 
-def _selection(market: Market, side: str, event: Event) -> str:
+def selection_label(market: Market, side: str, event: Event) -> str:
     if market.player:
         return f"{market.player} {side}"
     if side in (event.home_team, event.away_team):
@@ -96,12 +92,16 @@ def scan(
     books: set[str] | None = None,
     kelly_mult: float = 0.25,
     max_bet_fraction: float = 0.03,
+    model_probs: dict[tuple[int, str, float | None], float] | None = None,
+    model_weight: float = 0.0,
     now: datetime | None = None,
 ) -> list[Opportunity]:
     """Return +EV prices sorted by EV, best first.
 
     `books` limits which books are reported (e.g. the ones you have accounts at); every
-    book still contributes to the consensus.
+    book still contributes to the consensus. With `model_weight` > 0, the fair probability
+    is that blend of the model's probability (keyed by market id, side, line) and the
+    consensus; lines the model doesn't cover use the consensus alone.
     """
     now = now or utcnow()
     # (market_id, line key) -> book -> side -> (price, line)
@@ -114,7 +114,7 @@ def scan(
             continue
         if market_type and market.market_type != market_type:
             continue
-        key = _line_key(market.market_type, snap.side, snap.line, event.home_team)
+        key = line_key(market.market_type, snap.side, snap.line, event.home_team)
         groups[(market.id, key)][snap.book][snap.side] = (snap.price, snap.line)
         context[market.id] = (market, event)
 
@@ -143,6 +143,9 @@ def scan(
                 if len(consensus) < min_books:
                     continue
                 fair = fmean(consensus)
+                model_p = (model_probs or {}).get((market_id, side, line))
+                if model_weight and model_p is not None:
+                    fair = model_weight * model_p + (1 - model_weight) * fair
                 ev = expected_value(fair, price)
                 if ev < min_ev:
                     continue
@@ -153,7 +156,7 @@ def scan(
                         event_label=matchup(event.away_team, event.home_team),
                         kickoff=as_utc(event.kickoff),
                         market_type=market.market_type,
-                        selection=_selection(market, side, event),
+                        selection=selection_label(market, side, event),
                         line=line,
                         book=book,
                         price=price,
@@ -162,6 +165,7 @@ def scan(
                         n_books=len(consensus),
                         best_other=max(others) if others else None,
                         kelly=min(kelly_fraction(fair, price) * kelly_mult, max_bet_fraction),
+                        model_prob=model_p if model_weight else None,
                     )
                 )
     opportunities.sort(key=lambda o: o.ev, reverse=True)

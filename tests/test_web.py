@@ -168,3 +168,35 @@ def test_pull_error_is_flashed():
     client = TestClient(create_app(shared_engine(), odds_client=lambda: OddsApiClient("")))
     r = client.post("/odds/pull")
     assert "BETMAP_ODDS_API_KEY is not set" in r.text
+
+
+def test_sync_results_settles_and_reports():
+    from datetime import timedelta
+
+    from betmap.tables import utcnow
+
+    from .test_results import schedule_row
+
+    kickoff = utcnow() - timedelta(hours=5)
+
+    def fetch(seasons):
+        return [schedule_row(kickoff=kickoff, score=(20, 24))], []
+
+    client = TestClient(create_app(shared_engine(), results_fetch=fetch))
+    client.post("/bets", data=bet_form(market="h2h", line="", notes=""))
+    client.post("/bets", data=bet_form(market="player_pass_yds", selection="Josh Allen Over"))
+    r = client.post("/results/sync")
+    assert "Settled 1 bet (1 win)" in r.text
+    # The prop is waiting on a box score: still open, and not flagged as a problem.
+    assert "flash-error" not in r.text and "Josh Allen Over" in r.text
+    assert 'class="status status-win"' in r.text
+
+
+def test_sync_results_reports_missing_stats_extra():
+    from betmap.data.nflverse import StatsUnavailable
+
+    def fetch(seasons):
+        raise StatsUnavailable("nflverse sync needs the stats extra")
+
+    client = TestClient(create_app(shared_engine(), results_fetch=fetch))
+    assert "Couldn" in client.post("/results/sync").text

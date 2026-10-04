@@ -90,6 +90,18 @@ class BankrollSummary:
     pushes: int
     open_bets: int
     expected_profit_open: float | None
+    clv_values: list[float]
+
+    @property
+    def avg_clv(self) -> float | None:
+        return sum(self.clv_values) / len(self.clv_values) if self.clv_values else None
+
+    @property
+    def beat_close(self) -> float | None:
+        """Share of bets with positive CLV."""
+        if not self.clv_values:
+            return None
+        return sum(v > 0 for v in self.clv_values) / len(self.clv_values)
 
     @property
     def bankroll(self) -> float:
@@ -130,4 +142,5 @@ def summarize(session: Session) -> BankrollSummary:
         pushes=sum(b.status == BetStatus.PUSH for b in bets),
         open_bets=len(open_bets),
         expected_profit_open=expected,
+        clv_values=[b.clv for b in bets if b.clv is not None and b.status != BetStatus.VOID],
     )

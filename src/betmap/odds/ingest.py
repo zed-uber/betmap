@@ -6,18 +6,25 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from betmap.data.nflverse import find_same_game
 from betmap.odds.client import GAME_MARKETS, OddsApiClient
 from betmap.tables import Event, Market, OddsSnapshot, utcnow
 
 
 def _upsert_event(session: Session, data: dict) -> Event:
+    kickoff = datetime.fromisoformat(data["commence_time"])
     event = session.scalars(select(Event).where(Event.odds_api_id == data["id"])).first()
     if event is None:
-        event = Event(odds_api_id=data["id"])
+        # The game may already exist from an nflverse schedule sync.
+        event = (
+            find_same_game(session, data["home_team"], data["away_team"], kickoff, odds_api_id=None)
+            or Event()
+        )
+        event.odds_api_id = data["id"]
         session.add(event)
     event.home_team = data["home_team"]
     event.away_team = data["away_team"]
-    event.kickoff = datetime.fromisoformat(data["commence_time"])
+    event.kickoff = kickoff
     return event
 
 

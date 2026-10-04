@@ -42,3 +42,11 @@ def abbr(team: str) -> str:
 
 def matchup(away: str, home: str) -> str:
     return f"{abbr(away)} @ {abbr(home)}"
+
+
+TEAM_NAME = {v: k for k, v in TEAM_ABBR.items()}
+
+
+def full_name(team: str) -> str:
+    """nflverse abbreviation (or a full name) to the full name The Odds API uses."""
+    return TEAM_NAME.get(team.upper(), team)

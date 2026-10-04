@@ -11,15 +11,15 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Placed</th><th>Event</th><th>Market</th><th>Selection</th><th class="num">Odds</th>
       <th class="num">Stake</th><th>Book</th><th class="num">EV</th><th>Status</th><th class="num">P/L</th>
-      <th class="num">Close</th><th class="num">CLV</th></tr></thead>
+      <th class="num" title="Fair closing odds (devigged consensus), or the book's closing price">Close</th><th class="num">CLV</th></tr></thead>
     <tbody>
     {% for b in bets %}
       <tr>{% include "_bet_row.html" %}
         <td><span class="status status-{{ b.status }}">{{ b.status }}</span></td>
         <td class="num {% if b.profit is not none %}{{ 'pos' if b.profit > 0 else 'neg' if b.profit < 0 else '' }}{% endif %}">{{ b.profit | signed if b.profit is not none else '' }}</td>
-        <td class="num">{{ b.closing_price | american if b.closing_price else '' }}</td>
-        {% if b.closing_price %}{% set clv = b.price / b.closing_price - 1 %}
-        <td class="num {{ 'pos' if clv > 0 else 'neg' }}">{{ clv | pct }}</td>{% else %}<td></td>{% endif %}
+        <td class="num">{% if b.closing_fair_prob %}<span title="devigged consensus at close">{{ (1 / b.closing_fair_prob) | american }}</span>{% elif b.closing_price %}{{ b.closing_price | american }}{% endif %}</td>
+        {% if b.clv is not none %}
+        <td class="num {{ 'pos' if b.clv > 0 else 'neg' if b.clv < 0 else '' }}">{{ b.clv | pct }}</td>{% else %}<td></td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
