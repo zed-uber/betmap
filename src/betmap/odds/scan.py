@@ -56,6 +56,7 @@ class Opportunity:
     model_prob: float | None = None  # game model's probability, when one was blended in
     fee_adjusted: bool = False  # price is net of an exchange fee
     side: str = ""  # raw side as quoted: team name, Over/Under, Yes/No
+    event_id: int = 0
 
 
 def pickem_quotes(session: Session, now: datetime | None = None) -> int:
@@ -115,7 +116,7 @@ def latest_quotes(session: Session) -> list[tuple[OddsSnapshot, Market, Event]]:
 def scan(
     session: Session,
     *,
-    min_ev: float = 0.01,
+    min_ev: float | None = 0.01,
     min_books: int = 3,
     method: str = "power",
     market_type: str | None = None,
@@ -127,7 +128,7 @@ def scan(
     fees: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> list[Opportunity]:
-    """Return +EV prices sorted by EV, best first.
+    """Return +EV prices sorted by EV, best first (every price when `min_ev` is None).
 
     `books` limits which books are reported (e.g. the ones you have accounts at); every
     book still contributes to the consensus. With `model_weight` > 0, the fair probability
@@ -188,7 +189,7 @@ def scan(
                 if model_weight and model_p is not None:
                     fair = model_weight * model_p + (1 - model_weight) * fair
                 ev = expected_value(fair, price)
-                if ev < min_ev:
+                if min_ev is not None and ev < min_ev:
                     continue
                 others = [p for b, (p, _) in offers.items() if b != book]
                 opportunities.append(
@@ -208,8 +209,50 @@ def scan(
                         kelly=min(kelly_fraction(fair, price) * kelly_mult, max_bet_fraction),
                         model_prob=model_p if model_weight else None,
                         side=side,
+                        event_id=event.id,
                         fee_adjusted=fees.get(book, 0.0) > 0,
                     )
                 )
     opportunities.sort(key=lambda o: o.ev, reverse=True)
     return opportunities
+
+
+@dataclass
+class BoardEntry:
+    """One side at one line, with every book's price and the best one."""
+
+    best: Opportunity  # highest-paying book; its fair prob and EV
+    offers: dict[str, float]  # book -> decimal price (net of exchange fees)
+
+    def __getattr__(self, name: str):
+        # market_id, event_id, event_label, kickoff, market_type, selection, side, line, ...
+        if name == "best":  # not set yet (e.g. during copying): don't recurse
+            raise AttributeError(name)
+        return getattr(self.best, name)
+
+    @property
+    def key(self) -> tuple[int, str, float | None]:
+        return (self.best.market_id, self.best.side, self.best.line)
+
+
+def board(session: Session, min_books: int = 1, **filters) -> list[BoardEntry]:
+    """Every priced side and line for upcoming games (the scan without an EV cutoff).
+
+    Takes the same filters as `scan` except `min_ev`. Unlike the scan, a side only needs one
+    other book to compare against, so thin markets (many props) still appear; each entry's
+    `n_books` says how many books its fair price rests on. Sorted by kickoff, game, market.
+    """
+    entries: dict[tuple[int, str, float | None], BoardEntry] = {}
+    for o in scan(session, min_ev=None, min_books=min_books, **filters):
+        key = (o.market_id, o.side, o.line)
+        entry = entries.get(key)
+        if entry is None:
+            entries[key] = BoardEntry(o, {o.book: o.price})
+            continue
+        entry.offers[o.book] = o.price
+        if o.price > entry.best.price:
+            entry.best = o
+    return sorted(
+        entries.values(),
+        key=lambda e: (e.kickoff, e.event_label, e.market_type, e.selection, e.line or 0),
+    )

@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from betmap.backtest.games import backtest
 from betmap.backtest.props import backtest_props
+from betmap.builder.pricing import board_event, find_entry, price_parlay
 from betmap.config import get_settings
 from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
@@ -18,7 +19,7 @@ from betmap.models.predict import load_predictions, predict_props, predict_upcom
 from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
-from betmap.odds.scan import last_pull_at, pickem_quotes, scan
+from betmap.odds.scan import board, last_pull_at, pickem_quotes, scan
 from betmap.portfolio.correlation import estimate_correlations
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
@@ -44,6 +45,8 @@ portfolio_app = typer.Typer(
     help="Joint risk, overlapping bets, and correlated Kelly sizing.", no_args_is_help=True
 )
 app.add_typer(portfolio_app, name="portfolio")
+parlay_app = typer.Typer(help="Price parlays against the latest odds.", no_args_is_help=True)
+app.add_typer(parlay_app, name="parlay")
 
 console = Console()
 
@@ -635,6 +638,84 @@ def model_evaluate() -> None:
         f"[dim]{result.pending} waiting on results, {result.no_close} without a closing "
         "consensus to compare against.[/]"
     )
+
+
+@parlay_app.command("price")
+def parlay_price(
+    leg: Annotated[
+        list[str],
+        typer.Option(
+            help='Repeat per leg: "KC @ BUF|spreads|BUF|-2.5" (event|market|selection|line)'
+        ),
+    ],
+    odds: Annotated[
+        str | None, typer.Option(help="The book's quoted price (required for same-game parlays)")
+    ] = None,
+    book: Annotated[str | None, typer.Option(help="Price cross-game legs at this book")] = None,
+) -> None:
+    """Fair odds and EV for a parlay, with correlation between same-game legs."""
+    settings = get_settings()
+    try:
+        specs = [parse_leg(spec) for spec in leg]
+        with session_scope() as s:
+            entries = board(s, books=settings.book_set, fees=settings.fee_rates)
+            chosen = []
+            for spec in specs:
+                event = board_event(s, entries, spec["event"])
+                if event is None:
+                    raise ValueError(
+                        f"no upcoming game matches '{spec['event']}' in the latest pull"
+                    )
+                found = find_entry(
+                    entries, event.id, spec["market_type"], spec["selection"], spec["line"], event
+                )
+                if not found:
+                    raise ValueError(
+                        f"no price in the latest pull for {spec['event']} {spec['market_type']} "
+                        f"{spec['selection']}"
+                        + ("" if spec["line"] is None else f" {spec['line']:g}")
+                    )
+                chosen.append(found)
+            quote = price_parlay(s, chosen, book=book, offered=parse_odds(odds) if odds else None)
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+
+    table = Table(title=f"{len(chosen)}-leg {'same-game ' if quote.same_game else ''}parlay")
+    for col in ("Leg", "Best price", "Fair"):
+        table.add_column(col)
+    for e in chosen:
+        line = (
+            ""
+            if e.line is None
+            else f" {e.line:+g}"
+            if e.market_type.endswith("spreads")
+            else f" {e.line:g}"
+        )
+        table.add_row(
+            f"{e.event_label} {e.selection}{line} ({e.market_type})",
+            f"{decimal_to_american(e.best.price):+.0f} {e.best.book}",
+            f"{e.fair_prob:.1%}",
+        )
+    console.print(table)
+    console.print(
+        f"Fair: {quote.fair_prob:.1%} ({decimal_to_american(quote.fair_price):+.0f})"
+        + (
+            f"; as if independent {quote.naive_prob:.1%}"
+            if abs(quote.fair_prob - quote.naive_prob) > 0.001
+            else ""
+        )
+    )
+    if quote.price is not None:
+        where = f" at {quote.book}" if quote.book and odds is None else ""
+        console.print(f"Price{where}: {decimal_to_american(quote.price):+.0f} → EV {quote.ev:+.1%}")
+    for problem in quote.problems:
+        console.print(f"[yellow]{problem}[/]")
+    if quote.same_game:
+        console.print(
+            "[dim]Same-game fair odds come from betmap's correlation estimates; treat small "
+            "edges with caution.[/]"
+        )
 
 
 @portfolio_app.command("risk")
