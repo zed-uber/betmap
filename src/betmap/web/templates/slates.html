@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Slates · betmap{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Draft slates <a class="more" href="/builder">← builder</a></h2>
+  {% if drafts %}
+  <form method="get" action="/slates" id="compare-form"></form>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Compare</th><th>Slate</th><th class="num">Items</th><th>Updated</th><th></th></tr></thead>
+    <tbody>
+    {% for d in drafts %}
+      <tr>
+        <td><input type="checkbox" name="compare" value="{{ d.id }}" form="compare-form" aria-label="Compare {{ d.name }}" {% if d.id in compare %}checked{% endif %}></td>
+        <td><a href="/builder?slate={{ d.id }}">{{ d.name }}</a></td>
+        <td class="num">{{ d.items | length }}</td>
+        <td class="muted">{{ d.updated_at | local }}</td>
+        <td class="actions">
+          <form method="post" action="/slates/{{ d.id }}/duplicate" class="inline"><input type="hidden" name="back" value="{{ back }}"><button type="submit">Duplicate</button></form>
+          <form method="post" action="/slates/{{ d.id }}/delete" class="inline"><input type="hidden" name="back" value="/slates"><button type="submit">Delete</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <button type="submit" form="compare-form" class="primary">Compare selected</button>
+  {% else %}<p class="muted">No drafts. Create one on the <a href="/builder">builder</a>.</p>{% endif %}
+</section>
+
+{% if views %}
+<section class="panel">
+  <h2>Comparison <span class="muted">at current prices</span></h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th></th>{% for v in views %}<th class="num"><a href="/builder?slate={{ v.slate.id }}">{{ v.slate.name }}</a></th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><td>Bets</td>{% for v in views %}<td class="num">{{ v.items | length }}</td>{% endfor %}</tr>
+      <tr><td>Total stake</td>{% for v in views %}<td class="num">{{ v.total_stake | money }}</td>{% endfor %}</tr>
+      <tr><td>Expected P/L</td>{% for v in views %}<td class="num {% if v.risk %}{{ 'pos' if v.risk.expected > 0 else 'neg' }}{% endif %}">{{ v.risk.expected | signed if v.risk else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Expected return on stake</td>{% for v in views %}<td class="num">{{ (v.risk.expected / v.total_stake) | pct if v.risk and v.total_stake else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Std dev</td>{% for v in views %}<td class="num">{{ v.risk.sd | money if v.risk else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Chance of a net loss</td>{% for v in views %}<td class="num">{{ '%.0f%%' % (v.risk.p_loss * 100) if v.risk else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Bad week (5th pct)</td>{% for v in views %}<td class="num">{{ v.risk.p05 | signed if v.risk else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Everything loses</td>{% for v in views %}<td class="num">{{ v.risk.worst | signed if v.risk else '–' }}</td>{% endfor %}</tr>
+      <tr><td title="Expected log growth of your bankroll: the Kelly yardstick, higher is better">Growth</td>{% for v in views %}<td class="num">{{ '%+.3f%%' % (v.growth * 100) if v.growth is not none else '–' }}</td>{% endfor %}</tr>
+      <tr><td>Linked pairs</td>{% for v in views %}<td class="num">{{ v.overlaps | length }}</td>{% endfor %}</tr>
+      <tr><td>Problems</td>{% for v in views %}<td class="num {{ 'neg' if v.problems }}">{{ v.problems | length }}</td>{% endfor %}</tr>
+      <tr><td></td>{% for v in views %}<td class="num"><form method="post" action="/slates/{{ v.slate.id }}/place" class="inline"><input type="hidden" name="back" value="{{ back }}"><button type="submit" class="primary">Place</button></form></td>{% endfor %}</tr>
+    </tbody>
+  </table></div>
+  <p class="hint">Growth is the best single number for choosing: it rewards edge and punishes risk the way Kelly sizing does. Blank stakes use each slate's suggested joint stakes.</p>
+</section>
+{% endif %}
+
+{% if placed %}
+<section class="panel">
+  <h2>Recently placed</h2>
+  <ul class="leg-list">{% for p in placed %}<li>{{ p.name }} <span class="muted">{{ p.updated_at | local }} · {{ p.items | length }} items</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

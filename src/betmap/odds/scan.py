@@ -223,6 +223,7 @@ class BoardEntry:
 
     best: Opportunity  # highest-paying book; its fair prob and EV
     offers: dict[str, float]  # book -> decimal price (net of exchange fees)
+    fairs: dict[str, float]  # book -> fair prob from the other books (leave-one-out)
 
     def __getattr__(self, name: str):
         # market_id, event_id, event_label, kickoff, market_type, selection, side, line, ...
@@ -247,9 +248,10 @@ def board(session: Session, min_books: int = 1, **filters) -> list[BoardEntry]:
         key = (o.market_id, o.side, o.line)
         entry = entries.get(key)
         if entry is None:
-            entries[key] = BoardEntry(o, {o.book: o.price})
+            entries[key] = BoardEntry(o, {o.book: o.price}, {o.book: o.fair_prob})
             continue
         entry.offers[o.book] = o.price
+        entry.fairs[o.book] = o.fair_prob
         if o.price > entry.best.price:
             entry.best = o
     return sorted(

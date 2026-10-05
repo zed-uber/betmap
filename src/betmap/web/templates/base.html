@@ -14,6 +14,7 @@
       <a href="/bets" {% if request.url.path == '/bets' %}aria-current="page"{% endif %}>Bets</a>
       <a href="/scan" {% if request.url.path == '/scan' %}aria-current="page"{% endif %}>Scan</a>
       <a href="/portfolio" {% if request.url.path == '/portfolio' %}aria-current="page"{% endif %}>Portfolio</a>
+      <a href="/builder" {% if request.url.path in ('/builder', '/slates') %}aria-current="page"{% endif %}>Builder</a>
     </nav>
   </header>
   <main>

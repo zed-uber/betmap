@@ -26,6 +26,7 @@ from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.tables import Bet, BetStatus
 from betmap.tracking import ledger
 from betmap.tracking.results import Fetch, update_results
+from betmap.web.builder import add_builder_routes
 
 HERE = Path(__file__).parent
 MARKET_TYPES = [
@@ -180,6 +181,7 @@ def create_app(
             yield s
 
     SessionDep = Annotated[Session, Depends(get_session)]
+    add_builder_routes(app, templates, get_session)
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, session: SessionDep, error: str = "", msg: str = ""):
