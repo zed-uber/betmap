@@ -8,8 +8,9 @@
       <button type="submit" class="primary" {% if not has_key %}disabled title="Set BETMAP_ODDS_API_KEY in .env"{% endif %}>Pull game lines</button>
     </form>
   </h2>
-  <p class="hint">A pull fetches moneyline, spread and total for games in the next 7 days (3 credits).
-    Props: <code>betmap odds pull --props player_pass_yds,...</code></p>
+  <p class="hint">A pull fetches moneyline, spread and total for games in the next 7 days from
+    {{ pull_books | join(", ") if pull_books else "the us region" }} (3 credits; every 10 books cost one region).
+    Props: <code>betmap odds pull --props player_reception_yds,...</code></p>
 </section>
 
 <section class="panel">
@@ -30,6 +31,7 @@
     {% endif %}
     <button type="submit">Apply</button>
   </form>
+  {% if pickem %}<p class="hint">{{ pickem }} pick'em prices (Underdog etc.) are stored but not scored: pick'em pays on whole entries, not single picks.</p>{% endif %}
   {% if book_filter and not f.all_books %}<p class="hint">Showing your books: {{ book_filter | join(", ") }}</p>{% endif %}
 
   {% if rows %}
@@ -45,7 +47,7 @@
         <td><span class="tag">{{ o.market_type }}</span></td>
         <td>{{ o.selection }}</td>
         <td class="num">{% if o.line is not none %}{{ ('%+g' if o.market_type.endswith('spreads') else '%g') % o.line }}{% endif %}</td>
-        <td>{{ o.book }}</td>
+        <td>{{ o.book }}{% if o.fee_adjusted %} <span class="tag" title="Odds shown net of the exchange's taker fee">after fee</span>{% endif %}</td>
         <td class="num">{{ o.price | american }}</td>
         <td class="num muted">{{ o.best_other | american if o.best_other else '' }}</td>
         <td class="num muted">{{ (1 / o.fair_prob) | american }}</td>
@@ -58,7 +60,7 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="hint">Fair = devigged consensus of books quoting both sides at that line. Stake = {{ '%g' % (kelly_mult * 100) }}%-Kelly on equity, capped.</p>
+  <p class="hint">Fair = devigged consensus of books quoting both sides at that line. Stake = {{ '%g' % (kelly_mult * 100) }}%-Kelly on equity, capped. Exchange prices are net of fees.</p>
   {% elif last_pull %}<p class="muted">No prices at or above {{ '%g' % (f.min_ev * 100) }}% EV.</p>
   {% else %}<p class="muted">Pull odds to scan for value.</p>{% endif %}
 </section>

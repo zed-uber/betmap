@@ -13,8 +13,10 @@ from statistics import fmean
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from betmap.odds.math import devig
-from betmap.odds.scan import line_key, selection_label
+from betmap.config import get_settings
+from betmap.odds.client import PICKEM_BOOKS
+from betmap.odds.math import after_exchange_fee, devig
+from betmap.odds.scan import line_key, selection_label, usable_market
 from betmap.tables import Bet, Event, Market, OddsSnapshot, as_utc, utcnow
 from betmap.tracking.grading import (
     find_event,
@@ -86,10 +88,16 @@ def consensus(
     key = line_key(market.market_type, side, line, event.home_team)
     by_book: dict[str, dict[str, float]] = defaultdict(dict)
     for s in quotes:
+        if s.book in PICKEM_BOOKS:
+            continue
         if line_key(market.market_type, s.side, s.line, event.home_team) == key:
             by_book[s.book][s.side] = s.price
     sides = sorted({s for q in by_book.values() for s in q})
-    complete = [q for q in by_book.values() if len(sides) >= 2 and all(s in q for s in sides)]
+    complete = [
+        q
+        for q in by_book.values()
+        if len(sides) >= 2 and all(s in q for s in sides) and usable_market([q[s] for s in sides])
+    ]
     if side not in sides or len(complete) < MIN_CLOSING_BOOKS:
         return None, by_book
     i = sides.index(side)
@@ -108,7 +116,10 @@ def closing_line(
         return None
     fair, by_book = consensus(quotes, market, event, bet_side, bet.line, method)
     complete = sum(1 for q in by_book.values() if len(q) >= 2)
-    own = by_book.get(bet.book.strip().lower(), {}).get(bet_side)
+    book = bet.book.strip().lower()
+    own = by_book.get(book, {}).get(bet_side)
+    if own is not None:  # logged exchange prices are net of fees; compare like with like
+        own = after_exchange_fee(own, get_settings().fee_rates.get(book, 0.0))
     return ClosingLine(fair, own, complete, max(s.fetched_at for s in quotes))
 
 

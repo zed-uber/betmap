@@ -43,8 +43,8 @@ betmap report
 
 Odds accept American (`-110`, `+150`), decimal (`1.91`), or a prediction-market contract price
 (`0.57`, `57c`: cost to win $1, so 1/0.57 = 1.754 decimal). All are stored as decimal. Contract
-prices are taken before fees; for Kalshi-style per-contract fees, add the fee to the price
-(e.g. 57c + 2c fee → `59c`).
+prices are taken before fees; for Kalshi, add its fee per contract to the price
+(0.07 x 0.57 x 0.43 ≈ 1.7c, so 57c → `58.7c`).
 
 Fair prob accepts `0.54`, `54`, or `54%`. In the web form, a rejected entry keeps what you typed
 and highlights the field to fix.
@@ -54,8 +54,24 @@ and highlights the field to fix.
 ```sh
 betmap odds pull                                  # moneyline/spread/total, next 7 days (3 credits)
 betmap odds pull --markets "" --props player_pass_yds,player_rush_yds   # props: credits x events
+betmap odds pull --regions us,us2                 # whole regions instead of the book list
 betmap odds scan [--min-ev 0.02] [--market spreads] [--all-books]
 ```
+
+**Which books.** Pulls request the books in `BETMAP_PULL_BOOKS` rather than a region. Every 10
+books cost the same credits as one region, so the default list (FanDuel, DraftKings, BetMGM,
+BetRivers, LowVig, BetOnline, Kalshi, Polymarket, Novig, Underdog) costs what the `us` region
+alone did while adding exchanges and pick'em. Kalshi stands in for Robinhood, whose sports
+contracts are listed on exchanges like Kalshi; log those bets with book `kalshi`.
+
+**Exchange fees.** Kalshi charges a taker fee of 0.07 x price x (1 - price) per $1 contract
+(1.75c at 50c, less toward the extremes). The scan scores and reports exchange prices *net*
+of that fee (marked "after fee"), so the odds it pre-fills when you log a bet already include
+it. Set rates per exchange with `BETMAP_EXCHANGE_FEES` (some Kalshi sports series charge half).
+
+**Pick'em (Underdog, PrizePicks).** These pay multipliers on multi-pick entries, so a single
+pick's listed price isn't a bet you can place. Their prices are stored but left out of the
+consensus and the scan until pick'em entries are modeled (see the planned features below).
 
 Each book's price is scored against the devigged consensus of the *other* books quoting
 both sides at the same line (at least `--min-books`, default 3). Stakes are fractional Kelly on
@@ -186,3 +202,11 @@ margin.
 4. ✅ Game-line model + walk-forward backtest (no edge yet)
 5. ✅ Player prop models + backtest (forward test accumulating)
 6. ✅ Portfolio: joint simulation, overlap detection, correlated fractional Kelly
+
+## Planned features
+
+- **Underdog pick'em entries** ⚠️ *Needs detailed review before planning.* Score pick'em
+  properly: model entry payouts (e.g. 2-pick 3x means each leg must hit ~57.7% to break even),
+  including non-default multipliers, and choose which legs to combine, using the portfolio's
+  correlation model to prefer (or avoid) linked legs. Underdog prices are already pulled and
+  stored for when this is built.

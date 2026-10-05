@@ -97,7 +97,7 @@ def test_rejects_bad_inputs(session):
 def test_edit_bet_changes_result_and_recomputes_payout(session):
     bet = ledger.place_bet(
         session, event_label="IND @ WAS", market_type="totals_h1", selection="Over",
-        line=21.5, book="Robinhood", price=1 / 0.57, stake=100,
+        line=21.5, book="kalshi", price=1 / 0.57, stake=100,
     )  # fmt: skip
     ledger.settle_bet(session, bet.id, BetStatus.WIN)
     settled_at = bet.settled_at
