@@ -194,6 +194,29 @@ Instead:
   market shows a lower Brier score than the close over a few hundred predictions, keep
   `--model-weight` low or at 0.
 
+### Bet builder and slates
+
+The web **Builder** page is where you put a bet card together:
+
+- **The board** lists every priced side and line for upcoming games (filter by game, market,
+  team/player, or +EV only), with the best price, fair probability, EV, and how many books the
+  fair price rests on.
+- **Slates** are saved, named drafts (`Sunday main`, `SGP ideas`). Add a line as a straight bet
+  (**+ Bet**) or start a parlay (**+ Parlay**) and keep adding legs to it (**+ Leg**).
+  Cross-game parlays are priced automatically; for a same-game parlay, type the book's quoted
+  price. Prices refresh from the latest pull; legs that moved or are no longer offered are
+  flagged.
+- Each slate shows suggested stakes from joint Kelly sizing (with your open bets counted; type
+  a stake to override), plus expected P/L, spread, chance of a net loss, a bad-week outcome,
+  expected bankroll growth, and bets that are linked to each other or to what you already hold.
+- **Duplicate** a slate to try a variation, then compare them side by side on the Slates page;
+  growth is the best single number to choose by. **Place** logs every item with a stake to your
+  bets (parlays with their legs), ready for results sync.
+
+```sh
+betmap slate list | show ID | compare ID ID ... | place ID
+```
+
 ### Portfolio: joint risk and sizing
 
 ```sh

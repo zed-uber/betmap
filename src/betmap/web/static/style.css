@@ -91,3 +91,21 @@ form.inline a.edit { align-self: center; font-size: .85rem; margin-left: .25rem;
 details.legs summary { cursor: pointer; }
 details.legs ul, ul.leg-list { margin: .3rem 0 0; padding-left: 1rem; white-space: normal; }
 details.legs li, ul.leg-list li { list-style: none; font-size: .85rem; }
+.builder { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 1rem; align-items: start; }
+@media (max-width: 1000px) { .builder { grid-template-columns: 1fr; } }
+.builder-bar { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.slate-panel { position: sticky; top: 1rem; }
+.slate-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.slate-item { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .7rem; margin-bottom: .6rem; }
+.slate-item.has-problem { border-color: var(--neg); }
+.item-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+.item-form { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; margin-top: .4rem; }
+.item-form label { display: flex; flex-direction: column; font-size: .75rem; color: var(--muted); }
+.item-form input { color: var(--text); padding: .2rem .4rem; }
+td.actions { white-space: nowrap; }
+td.actions form.inline button { padding: .15rem .45rem; font-size: .8rem; }
+button.link { background: none; border: 0; color: var(--muted); padding: 0 .2rem; }
+button.link:hover { color: var(--neg); }
+.place-form { margin-top: .75rem; }
+.hint.neg { color: var(--neg); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

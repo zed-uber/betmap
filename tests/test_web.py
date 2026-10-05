@@ -298,3 +298,105 @@ def test_parlay_shows_legs_on_bets_and_edit_pages():
     assert "Over 47.5" in r.text and "status-open" in r.text
     r = client.get("/bets/1/edit")
     assert "Parlay legs (read-only" in r.text
+
+
+def builder_client():
+    from betmap.db import session_scope
+    from betmap.odds.ingest import ingest_events
+
+    from .test_builder import second_game
+
+    engine = shared_engine()
+    client = TestClient(create_app(engine))
+    with session_scope(engine) as s:
+        ingest_events(s, [game(), second_game()])
+    client.post("/bankroll", data={"kind": "deposit", "amount": "1000"})
+    return client, engine
+
+
+def board_form(client, selection_text, kind, parlay=""):
+    """The hidden fields of the board row's add form for a selection, e.g. 'BUF -2.5'."""
+    import re
+
+    page = client.get("/builder").text
+    rows = page.split("<tr>")
+    row = next(r for r in rows if f"<td>{selection_text}</td>" in r)
+    fields = dict(
+        re.findall(
+            r'name="(\w+)" value="([^"]*)"', row.split(f'value="{kind}"')[0].rsplit("<form", 1)[1]
+        )
+    )
+    fields.update({"kind": kind, "parlay": parlay, "back": "/builder"})
+    return unescape_fields(fields)
+
+
+def unescape_fields(fields):
+    return {k: unescape(v) for k, v in fields.items()}
+
+
+def test_builder_flow():
+    client, _ = builder_client()
+    r = client.get("/builder")
+    assert "No slate yet" in r.text and "BUF +2.5" not in r.text  # spreads use signed lines
+    assert "BUF -2.5" in r.text and "NYJ" in r.text
+
+    r = client.post("/slates", data={"name": "Sunday main", "back": "/builder"})
+    assert "Created slate" in r.text and "Sunday main" in r.text and "+ Parlay" in r.text
+
+    r = client.post("/slates/1/add", data=board_form(client, "BUF -2.5", "straight"))
+    assert "Added BUF as a straight bet" in r.text and "soft" in r.text
+
+    # Start a same-game parlay and add a second leg to it.
+    r = client.post("/slates/1/add", data=board_form(client, "BUF", "parlay"))
+    assert "parlay=2" in str(r.url) and "Building a parlay (1 leg)" in r.text
+    r = client.post("/slates/1/add", data=board_form(client, "BUF -2.5", "parlay", parlay="2"))
+    assert "(2 legs)" in r.text and "enter the price the book quotes" in r.text
+    assert "Correlated legs" in r.text
+
+    r = client.post("/slates/items/2", data={"stake": "10", "offered": "+160", "book": "FanDuel",
+                                             "back": "/builder?slate=1"})  # fmt: skip
+    assert "Saved" in r.text and 'value="+160"' in r.text and 'value="fanduel"' in r.text
+    assert "enter the price" not in r.text
+
+    r = client.post("/slates/items/2", data={"stake": "x", "back": "/builder?slate=1"})
+    assert "Couldn" in r.text
+    # The +EV SGP already holds BUF -2.5, so joint sizing suggests nothing more on the
+    # straight; enter a stake to bet it anyway.
+    assert 'placeholder="0.00 suggested"' in client.get("/builder?slate=1").text
+    client.post("/slates/items/1", data={"stake": "15", "back": "/builder?slate=1"})
+
+    # Duplicate, then compare both.
+    r = client.post("/slates/1/duplicate", data={"back": "/builder?slate=1"})
+    assert "Copied to" in r.text
+    r = client.get("/slates?compare=1&compare=2")
+    assert "Comparison" in r.text and r.text.count('href="/builder?slate=') >= 4
+    assert "Growth" in r.text
+
+    r = client.post("/slates/1/place", data={"back": "/builder?slate=1"})
+    assert r.url.path == "/bets" and "Placed &#39;Sunday main&#39;: 2 bets" in r.text
+    assert "2-leg: BUF + BUF -2.5" in r.text and "fanduel" in r.text
+    r = client.post(
+        "/slates/1/add", data=board_form(client, "NYJ", "straight") | {"back": "/builder?slate=1"}
+    )
+    assert "already placed" in r.text
+
+
+def test_builder_errors():
+    client, _ = builder_client()
+    client.post("/slates", data={"name": "S", "back": "/builder"})
+    gone = {
+        "market_id": "999",
+        "side": "Nobody",
+        "line": "",
+        "kind": "straight",
+        "back": "/builder",
+    }
+    assert "no longer on the board" in client.post("/slates/1/add", data=gone).text
+    assert "needs a name" in client.post("/slates", data={"name": " ", "back": "/builder"}).text
+    r = client.post("/slates/1/place", data={"back": "/builder?slate=1"})
+    assert "nothing to place" in r.text
+    # The back link can't send you off-site.
+    r = client.post("/slates/1/rename", data={"name": "T", "back": "https://evil.example/x"})
+    assert r.url.path == "/builder" and "Renamed" in r.text
+    r = client.post("/slates/1/delete", data={"back": "/slates"})
+    assert "Deleted" in r.text and "No drafts" in r.text

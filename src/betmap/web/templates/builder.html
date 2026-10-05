@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Builder · betmap{% endblock %}
+{% macro line(e) %}{% if e.line is not none %} {{ ('%+g' if e.market_type.endswith('spreads') else '%g') % e.line }}{% endif %}{% endmacro %}
+{% block content %}
+<section class="panel builder-bar">
+  {% if drafts %}
+  <form method="get" action="/builder" class="inline">
+    <label class="sr-only" for="slate-pick">Slate</label>
+    <select id="slate-pick" name="slate" onchange="this.form.submit()">
+      {% for d in drafts %}<option value="{{ d.id }}" {% if slate and d.id == slate.id %}selected{% endif %}>{{ d.name }} ({{ d.items | length }})</option>{% endfor %}
+    </select>
+    <noscript><button type="submit">Open</button></noscript>
+  </form>
+  {% endif %}
+  <form method="post" action="/slates" class="inline">
+    <input name="name" placeholder="New slate name" aria-label="New slate name" required>
+    <input type="hidden" name="back" value="{{ back }}">
+    <button type="submit">New slate</button>
+  </form>
+  <a class="more" href="/slates">All slates &amp; compare →</a>
+</section>
+
+<div class="builder">
+<section class="panel">
+  <h2>Board <span class="muted">{% if last_pull %}odds as of {{ last_pull | local }}{% else %}no odds pulled{% endif %}</span></h2>
+  <form method="get" action="/builder" class="filter-form">
+    {% if slate %}<input type="hidden" name="slate" value="{{ slate.id }}">{% endif %}
+    {% if building %}<input type="hidden" name="parlay" value="{{ building.id }}">{% endif %}
+    <label>Game <select name="game"><option value="">all</option>{% for g in games %}<option {% if g == f.game %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></label>
+    <label>Market <select name="market"><option value="">all</option>{% for m in markets %}<option {% if m == f.market %}selected{% endif %}>{{ m }}</option>{% endfor %}</select></label>
+    <label>Search <input name="q" value="{{ f.q }}" placeholder="team or player" size="12"></label>
+    <label class="check"><input type="checkbox" name="ev" value="1" {% if f.ev %}checked{% endif %}> +EV only</label>
+    <button type="submit">Filter</button>
+  </form>
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Game</th><th>Market</th><th>Selection</th><th class="num">Best</th><th class="num" title="Devigged consensus of the other books">Fair</th><th class="num">EV</th><th class="num">Books</th>{% if slate %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for e in rows %}
+      <tr>
+        <td>{{ e.event_label }} <span class="muted">{{ e.kickoff | local('%a') }}</span></td>
+        <td><span class="tag">{{ e.market_type }}</span></td>
+        <td>{{ e.selection }}{{ line(e) }}</td>
+        <td class="num">{{ e.best.price | american }} <span class="muted">{{ e.best.book }}</span></td>
+        <td class="num muted">{{ '%.1f%%' % (e.fair_prob * 100) }}</td>
+        <td class="num {{ 'pos' if e.ev > 0 else 'neg' }}">{{ e.ev | pct }}</td>
+        <td class="num muted">{{ e.n_books }}</td>
+        {% if slate %}<td class="actions">
+          {% for kind, label in (('straight', '+ Bet'), ('parlay', '+ Leg' if building else '+ Parlay')) %}
+          <form method="post" action="/slates/{{ slate.id }}/add" class="inline">
+            <input type="hidden" name="market_id" value="{{ e.market_id }}">
+            <input type="hidden" name="side" value="{{ e.side }}">
+            <input type="hidden" name="line" value="{{ '' if e.line is none else e.line }}">
+            <input type="hidden" name="kind" value="{{ kind }}">
+            <input type="hidden" name="parlay" value="{{ building.id if building and kind == 'parlay' else '' }}">
+            <input type="hidden" name="back" value="{{ back }}">
+            <button type="submit" title="{{ 'Add as a straight bet' if kind == 'straight' else ('Add to the parlay being built' if building else 'Start a new parlay with this leg') }}">{{ label }}</button>
+          </form>
+          {% endfor %}
+        </td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% if hidden_rows %}<p class="hint">{{ hidden_rows }} more; narrow the filters to see them.</p>{% endif %}
+  {% else %}<p class="muted">Nothing on the board{% if f.game or f.market or f.q or f.ev %} for these filters{% endif %}. Pull odds to fill it.</p>{% endif %}
+</section>
+
+<section class="panel slate-panel">
+  {% if not slate %}
+  <h2>No slate yet</h2>
+  <p class="muted">Create a slate above, then add bets and parlays from the board.</p>
+  {% else %}
+  <h2>{{ slate.name }} <span class="muted">{{ slate.status }}</span></h2>
+  <div class="slate-actions">
+    <form method="post" action="/slates/{{ slate.id }}/rename" class="inline">
+      <input name="name" value="{{ slate.name }}" aria-label="Slate name" size="12">
+      <input type="hidden" name="back" value="{{ back }}"><button type="submit">Rename</button>
+    </form>
+    <form method="post" action="/slates/{{ slate.id }}/duplicate" class="inline">
+      <input type="hidden" name="back" value="{{ back }}"><button type="submit" title="Copy this slate to try a variation">Duplicate</button>
+    </form>
+  </div>
+  {% if building %}<p class="flash flash-ok">Building a parlay ({{ building.legs | length }} leg{{ '' if building.legs | length == 1 else 's' }}): use <b>+ Leg</b> on the board. <a href="/builder?slate={{ slate.id }}">Done</a></p>{% endif %}
+
+  {% for v in view.items %}
+  <div class="slate-item {{ 'has-problem' if v.problems }}">
+    <div class="item-head">
+      <span class="tag">{{ 'parlay' if v.item.kind == 'parlay' else 'straight' }}{% if v.quote and v.quote.same_game %} · same game{% endif %}</span>
+      {% if v.price %}<b>{{ v.price | american }}</b> <span class="muted">{{ v.book or '' }}</span>{% endif %}
+      {% if v.fair_prob is not none %}<span class="muted">fair {{ '%.1f%%' % (v.fair_prob * 100) }}</span>{% endif %}
+      {% if v.ev is not none %}<span class="{{ 'pos' if v.ev > 0 else 'neg' }}">EV {{ v.ev | pct }}</span>{% endif %}
+    </div>
+    <ul class="leg-list">
+      {% for lv in v.legs %}<li>
+        {% if lv.entry %}{{ lv.entry.event_label }} · {{ lv.entry.selection }}{{ line(lv.entry) }} <span class="muted">{{ lv.entry.market_type }}</span>{% else %}{{ lv.leg.side }}{% if lv.leg.line is not none %} {{ '%g' % lv.leg.line }}{% endif %}{% endif %}
+        {% if lv.entry is none %}<span class="tag neg">gone</span>{% elif lv.moved %}<span class="tag" title="Was {{ lv.leg.price_at_add | american }} when added">moved</span>{% endif %}
+        <form method="post" action="/slates/legs/{{ lv.leg.id }}/remove" class="inline"><input type="hidden" name="back" value="{{ back }}"><button type="submit" class="link" aria-label="Remove leg">✕</button></form>
+      </li>{% endfor %}
+    </ul>
+    {% if v.quote and v.quote.fair_prob and v.quote.naive_prob and (v.quote.fair_prob - v.quote.naive_prob) | abs > 0.001 %}
+    <p class="hint">Correlated legs: fair {{ '%.1f%%' % (v.quote.fair_prob * 100) }} vs {{ '%.1f%%' % (v.quote.naive_prob * 100) }} if independent.</p>{% endif %}
+    {% for p in v.problems %}<p class="hint neg">{{ p }}</p>{% endfor %}
+    <form method="post" action="/slates/items/{{ v.item.id }}" class="item-form">
+      <label>Stake <input name="stake" value="{{ '%.2f' % v.item.stake if v.item.stake is not none else '' }}" placeholder="{{ '%.2f' % v.stake if v.item.stake is none else '' }} suggested" size="9" inputmode="decimal"></label>
+      {% if v.item.kind == 'parlay' %}
+      <label>Book's price <input name="offered" value="{{ v.item.offered_price | american if v.item.offered_price else '' }}" placeholder="{{ 'required' if v.quote and v.quote.same_game else 'auto' }}" size="7"></label>
+      <label>Book <input name="book" value="{{ v.item.book or '' }}" placeholder="{{ v.book or 'fanduel' }}" size="9"></label>
+      {% endif %}
+      <input type="hidden" name="back" value="{{ back }}"><button type="submit">Save</button>
+      {% if v.item.kind == 'parlay' and (not building or building.id != v.item.id) %}<a href="/builder?slate={{ slate.id }}&parlay={{ v.item.id }}">add legs</a>{% endif %}
+    </form>
+  </div>
+  {% else %}<p class="muted">Empty. Use <b>+ Bet</b> or <b>+ Parlay</b> on the board.</p>{% endfor %}
+
+  {% if view.items %}
+  {% set r = view.risk %}
+  <dl class="facts">
+    <dt>Total stake</dt><dd>{{ view.total_stake | money }}</dd>
+    {% if r %}
+    <dt>Expected P/L</dt><dd class="{{ 'pos' if r.expected > 0 else 'neg' }}">{{ r.expected | signed }}</dd>
+    <dt>Std dev</dt><dd>{{ r.sd | money }}</dd>
+    <dt>Chance of a net loss</dt><dd>{{ '%.0f%%' % (r.p_loss * 100) }}</dd>
+    <dt>Bad week (5th pct)</dt><dd>{{ r.p05 | signed }}</dd>
+    <dt>Everything loses</dt><dd>{{ r.worst | signed }}</dd>
+    {% if view.growth is not none %}<dt title="Expected log growth of your bankroll; higher is better">Growth</dt><dd>{{ '%+.3f%%' % (view.growth * 100) }}</dd>{% endif %}
+    {% endif %}
+  </dl>
+  {% for o in view.overlaps %}{% if loop.first %}<p class="hint">Linked with each other or your open bets:</p><ul class="leg-list">{% endif %}
+    <li>{{ o.a.label }} ↔ {{ o.b.label }} <span class="{{ 'neg' if o.correlation < 0 }}">{{ '%+.2f' % o.correlation }}</span></li>
+  {% if loop.last %}</ul>{% endif %}{% endfor %}
+  <form method="post" action="/slates/{{ slate.id }}/place" class="place-form">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button type="submit" class="primary" {% if view.problems or not view.total_stake %}title="Fix the problems above first"{% endif %}>Place slate ({{ view.total_stake | money }})</button>
+  </form>
+  <p class="hint">Blank stakes use the suggested joint-Kelly stake (with your open bets counted). Placing logs every item with a stake to your bets.</p>
+  {% endif %}
+  {% endif %}
+</section>
+</div>
+{% endblock %}

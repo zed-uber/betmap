@@ -9,6 +9,7 @@ from sqlalchemy import select
 from betmap.backtest.games import backtest
 from betmap.backtest.props import backtest_props
 from betmap.builder.pricing import board_event, find_entry, price_parlay
+from betmap.builder.slates import draft_slates, evaluate_slate, place_slate
 from betmap.config import get_settings
 from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
@@ -23,7 +24,7 @@ from betmap.odds.scan import board, last_pull_at, pickem_quotes, scan
 from betmap.portfolio.correlation import estimate_correlations
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
-from betmap.tables import Bet, BetStatus, Market, utcnow
+from betmap.tables import Bet, BetStatus, Market, Slate, as_utc, utcnow
 from betmap.tracking import ledger
 from betmap.tracking.grading import event_for_label
 from betmap.tracking.results import update_results
@@ -47,6 +48,10 @@ portfolio_app = typer.Typer(
 app.add_typer(portfolio_app, name="portfolio")
 parlay_app = typer.Typer(help="Price parlays against the latest odds.", no_args_is_help=True)
 app.add_typer(parlay_app, name="parlay")
+slate_app = typer.Typer(
+    help="Saved slates (build them on the web Builder page).", no_args_is_help=True
+)
+app.add_typer(slate_app, name="slate")
 
 console = Console()
 
@@ -716,6 +721,126 @@ def parlay_price(
             "[dim]Same-game fair odds come from betmap's correlation estimates; treat small "
             "edges with caution.[/]"
         )
+
+
+def evaluate_now(session, slate, entries):
+    settings = get_settings()
+    return evaluate_slate(
+        session,
+        slate,
+        entries,
+        ledger.summarize(session).equity,
+        settings.kelly_fraction,
+        settings.max_bet_fraction,
+        settings.max_game_fraction,
+    )
+
+
+def _slate_views(ids: list[int]):
+    """Evaluate slates at current prices."""
+    settings = get_settings()
+    with session_scope() as s:
+        entries = board(s, books=settings.book_set, fees=settings.fee_rates)
+        views = []
+        for slate_id in ids:
+            slate = s.get(Slate, slate_id)
+            if slate is None:
+                raise ValueError(f"no slate #{slate_id}")
+            views.append(evaluate_now(s, slate, entries))
+        return views
+
+
+@slate_app.command("list")
+def slate_list() -> None:
+    """Draft slates."""
+    with session_scope() as s:
+        rows = [(d.id, d.name, len(d.items), d.updated_at) for d in draft_slates(s)]
+    if not rows:
+        console.print("No draft slates. Build one on the web Builder page.")
+        return
+    table = Table(title="Draft slates")
+    for col in ("ID", "Name", "Items", "Updated"):
+        table.add_column(col)
+    for slate_id, name, items, updated in rows:
+        table.add_row(str(slate_id), name, str(items), f"{as_utc(updated).astimezone():%a %H:%M}")
+    console.print(table)
+
+
+@slate_app.command("show")
+def slate_show(slate_id: int) -> None:
+    """A slate's bets at current prices, with suggested stakes and risk."""
+    try:
+        [view] = _slate_views([slate_id])
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    table = Table(title=f"{view.slate.name} ({view.slate.status})")
+    for col in ("Bet", "Price", "Fair", "EV", "Stake", "Problems"):
+        table.add_column(col)
+    for v in view.items:
+        table.add_row(
+            ("Parlay: " if v.item.kind == "parlay" else "") + v.label,
+            f"{decimal_to_american(v.price):+.0f} {v.book or ''}" if v.price else "-",
+            f"{v.fair_prob:.1%}" if v.fair_prob is not None else "-",
+            f"{v.ev:+.1%}" if v.ev is not None else "-",
+            f"{v.stake:.2f}" + ("" if v.item.stake is not None else " (suggested)"),
+            "; ".join(v.problems),
+        )
+    console.print(table)
+    if view.risk:
+        r = view.risk
+        console.print(
+            f"Stake {view.total_stake:.2f} · expected {r.expected:+.2f} · sd {r.sd:.2f} · "
+            f"P(loss) {r.p_loss:.0%} · 5th pct {r.p05:+.2f}"
+            + (f" · growth {view.growth:+.3%}" if view.growth is not None else "")
+        )
+
+
+@slate_app.command("compare")
+def slate_compare(slate_ids: list[int]) -> None:
+    """Compare slates side by side at current prices."""
+    try:
+        views = _slate_views(slate_ids)
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    table = Table(title="Slates compared")
+    table.add_column("")
+    for v in views:
+        table.add_column(v.slate.name)
+
+    def row(label, fn):
+        table.add_row(label, *(fn(v) if v.risk else "-" for v in views))
+
+    table.add_row("Bets", *(str(len(v.items)) for v in views))
+    table.add_row("Stake", *(f"{v.total_stake:.2f}" for v in views))
+    row("Expected P/L", lambda v: f"{v.risk.expected:+.2f}")
+    row("Std dev", lambda v: f"{v.risk.sd:.2f}")
+    row("P(net loss)", lambda v: f"{v.risk.p_loss:.0%}")
+    row("5th percentile", lambda v: f"{v.risk.p05:+.2f}")
+    row("Growth", lambda v: f"{v.growth:+.3%}" if v.growth is not None else "-")
+    table.add_row("Problems", *(str(len(v.problems)) for v in views))
+    console.print(table)
+
+
+@slate_app.command("place")
+def slate_place(slate_id: int) -> None:
+    """Log a slate's bets (items with a stake) to the ledger."""
+    settings = get_settings()
+    try:
+        with session_scope() as s:
+            slate = s.get(Slate, slate_id)
+            if slate is None:
+                raise ValueError(f"no slate #{slate_id}")
+            entries = board(s, books=settings.book_set, fees=settings.fee_rates)
+            view = evaluate_now(s, slate, entries)
+            bets = place_slate(s, view)
+            summary = [(b.id, b.selection, b.stake) for b in bets]
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    for bet_id, selection, stake in summary:
+        console.print(f"Logged #{bet_id}: {selection} for {stake:.2f}")
 
 
 @portfolio_app.command("risk")

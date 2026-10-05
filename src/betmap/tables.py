@@ -207,3 +207,62 @@ class PlayerGameStat(Base):
     receiving_yards: Mapped[int | None]
     receiving_tds: Mapped[int | None]
     special_teams_tds: Mapped[int | None]
+
+
+class SlateStatus(StrEnum):
+    DRAFT = "draft"
+    PLACED = "placed"
+
+
+class Slate(Base):
+    """A named set of bets being considered together (straights and parlays)."""
+
+    __tablename__ = "slates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    status: Mapped[str] = mapped_column(String, default=SlateStatus.DRAFT)
+    notes: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    items: Mapped[list["SlateItem"]] = relationship(
+        back_populates="slate", order_by="SlateItem.position", cascade="all, delete-orphan"
+    )
+
+
+class SlateItem(Base):
+    """One bet in a slate: a straight (one leg) or a parlay (two or more)."""
+
+    __tablename__ = "slate_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slate_id: Mapped[int] = mapped_column(ForeignKey("slates.id"), index=True)
+    kind: Mapped[str] = mapped_column(String, default=BetKind.STRAIGHT)
+    stake: Mapped[float | None]  # None: use the suggested stake
+    offered_price: Mapped[float | None]  # typed parlay price (required for same-game parlays)
+    book: Mapped[str | None]  # where a parlay with a typed price is bet
+    position: Mapped[int] = mapped_column(default=0)
+
+    slate: Mapped[Slate] = relationship(back_populates="items")
+    legs: Mapped[list["SlateLeg"]] = relationship(
+        back_populates="item", order_by="SlateLeg.id", cascade="all, delete-orphan"
+    )
+
+
+class SlateLeg(Base):
+    """A selection from the board; prices refresh from the latest pull when evaluated."""
+
+    __tablename__ = "slate_legs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("slate_items.id"), index=True)
+    market_id: Mapped[int] = mapped_column(ForeignKey("markets.id"))
+    side: Mapped[str]  # as quoted: team name, Over/Under, Yes/No
+    line: Mapped[float | None]
+    book: Mapped[str | None]  # book chosen when added (straights bet there if still offered)
+    price_at_add: Mapped[float | None]
+
+    item: Mapped[SlateItem] = relationship(back_populates="legs")
