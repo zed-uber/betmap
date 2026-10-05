@@ -1,7 +1,9 @@
 """Minimal client for The Odds API v4 (https://the-odds-api.com/liveapi/guides/v4/).
 
 Credit cost per call is markets x regions; for per-event prop calls that applies per event.
-The events listing is free.
+Listing bookmakers instead of regions costs one region per 10 books, which is how one
+pull can cover sportsbooks, exchanges (Kalshi), and pick'em sites (Underdog) at the price
+of a single region. The events listing is free.
 """
 
 from dataclasses import dataclass
@@ -14,6 +16,9 @@ from betmap.tables import utcnow
 BASE_URL = "https://api.the-odds-api.com/v4"
 SPORT = "americanfootball_nfl"
 GAME_MARKETS = ("h2h", "spreads", "totals")
+# Pick'em (DFS) sites pay multipliers on multi-pick entries, so a single pick's listed
+# price isn't a bet you can make. Stored, but kept out of the consensus and the scan.
+PICKEM_BOOKS = frozenset({"underdog", "prizepicks", "dabble_us_dfs", "pick6"})
 
 
 class OddsApiError(Exception):
@@ -69,22 +74,37 @@ class OddsApiClient:
         """Upcoming events without odds (free)."""
         return self._get(f"/sports/{SPORT}/events", **self._window(days))
 
+    @staticmethod
+    def _venues(regions: str, bookmakers: tuple[str, ...]) -> dict[str, str]:
+        # The API uses `bookmakers` instead of `regions` when given.
+        return {"bookmakers": ",".join(bookmakers)} if bookmakers else {"regions": regions}
+
     def game_odds(
-        self, markets: tuple[str, ...] = GAME_MARKETS, regions: str = "us", days: float = 7
+        self,
+        markets: tuple[str, ...] = GAME_MARKETS,
+        regions: str = "us",
+        days: float = 7,
+        bookmakers: tuple[str, ...] = (),
     ) -> list[dict]:
         return self._get(
             f"/sports/{SPORT}/odds",
-            regions=regions,
             markets=",".join(markets),
             oddsFormat="decimal",
+            **self._venues(regions, bookmakers),
             **self._window(days),
         )
 
-    def event_odds(self, event_id: str, markets: tuple[str, ...], regions: str = "us") -> dict:
+    def event_odds(
+        self,
+        event_id: str,
+        markets: tuple[str, ...],
+        regions: str = "us",
+        bookmakers: tuple[str, ...] = (),
+    ) -> dict:
         """Odds for one event; the only way to get player props."""
         return self._get(
             f"/sports/{SPORT}/events/{event_id}/odds",
-            regions=regions,
             markets=",".join(markets),
             oddsFormat="decimal",
+            **self._venues(regions, bookmakers),
         )

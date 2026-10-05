@@ -110,3 +110,15 @@ def kelly_fraction(prob: float, decimal: float) -> float:
 
 def fair_decimal(prob: float) -> float:
     return 1 / prob
+
+
+def after_exchange_fee(decimal: float, rate: float) -> float:
+    """Decimal odds net of an exchange taker fee of rate x P x (1 - P) per $1 contract.
+
+    A contract priced P pays $1; with the fee it costs P + fee, so the odds you actually
+    get are 1 / (P + fee). Kalshi's rate is 0.07 (rounding up to the cent is ignored).
+    """
+    if rate <= 0:
+        return decimal
+    p = 1 / decimal
+    return 1 / (p + rate * p * (1 - p))

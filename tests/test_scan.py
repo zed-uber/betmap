@@ -7,7 +7,7 @@ from betmap.odds.ingest import ingest_events
 from betmap.odds.scan import scan
 from betmap.tables import utcnow
 
-from .odds_fixtures import book, game, h2h, prop_event
+from .odds_fixtures import book, game, h2h, prop_event, spreads
 
 
 @pytest.fixture
@@ -71,3 +71,53 @@ def test_props(session):
     ingest_events(session, [prop_event()])
     opps = scan(session)
     assert [(o.selection, o.book, o.line) for o in opps] == [("Josh Allen Over", "betmgm", 249.5)]
+
+
+def test_exchange_prices_are_scored_after_fees(session):
+    # Kalshi quotes BUF -2.5 at 2.05 (about 48.8c). Net of the 0.07 fee that's ~1.96.
+    from betmap.odds.math import after_exchange_fee
+
+    data = game()
+    data["bookmakers"][-1]["key"] = "kalshi"  # the off-market book is now an exchange
+    ingest_events(session, [data])
+    [raw] = scan(session)
+    assert raw.price == 2.05 and raw.ev == pytest.approx(0.025) and not raw.fee_adjusted
+    # After the fee the edge is gone, so the default scan drops it.
+    assert scan(session, fees={"kalshi": 0.07}) == []
+    [net] = [
+        o
+        for o in scan(session, min_ev=-1, fees={"kalshi": 0.07})
+        if o.book == "kalshi" and o.selection == "BUF"
+    ]
+    assert net.price == pytest.approx(after_exchange_fee(2.05, 0.07)) and net.fee_adjusted
+    assert net.ev < 0 and net.fair_prob == pytest.approx(raw.fair_prob)
+
+
+def test_pickem_books_are_not_scanned(session):
+    from betmap.odds.scan import pickem_quotes
+
+    data = game()
+    # Underdog's pick looks like a huge edge, but it isn't a single bet you can make.
+    data["bookmakers"].append(book("underdog", {"spreads": spreads(-2.5, 3.0, 1.3)}))
+    ingest_events(session, [data])
+    opps = scan(session, min_ev=-1)
+    assert all(o.book != "underdog" for o in opps)
+    assert all(o.n_books == 3 for o in opps)  # not part of the consensus either
+    assert pickem_quotes(session) == 2
+
+
+def test_unusable_exchange_quotes_stay_out_of_the_consensus(session):
+    from betmap.odds.scan import usable_market
+
+    assert usable_market([1.91, 1.91]) and not usable_market([1.0, 1.0])
+    assert not usable_market([1.40, 1.50])  # ~38% margin: a thin order book, not a price
+    data = game()
+    data["bookmakers"] += [
+        book("novig", {"spreads": spreads(-2.5, 1.0, 1.0)}),
+        book("polymarket", {"spreads": spreads(-2.5, 1.40, 1.50)}),
+    ]
+    ingest_events(session, [data])
+    opps = scan(session, min_ev=-1)  # used to crash devigging the 1.0 prices
+    spread_opps = [o for o in opps if o.market_type == "spreads"]
+    assert all(o.n_books == 3 for o in spread_opps if o.book in ("draftkings", "soft"))
+    assert all(o.book != "novig" for o in spread_opps)  # a 1.0 price is never a bet

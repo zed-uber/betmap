@@ -78,3 +78,22 @@ def test_kelly_closed_form():
     assert kelly_fraction(0.55, 2.0) == pytest.approx(0.10)
     assert kelly_fraction(0.40, 3.0) == pytest.approx((2 * 0.4 - 0.6) / 2)
     assert kelly_fraction(0.45, 2.0) == 0.0
+
+
+def test_after_exchange_fee():
+    from betmap.odds.math import after_exchange_fee
+
+    # A 50c Kalshi contract pays $1 and costs 50c + 1.75c in fees.
+    assert after_exchange_fee(2.0, 0.07) == pytest.approx(1 / 0.5175)
+    # The fee shrinks toward the extremes: 0.07 x 0.9 x 0.1 = 0.63c on a 90c contract.
+    assert after_exchange_fee(1 / 0.9, 0.07) == pytest.approx(1 / 0.9063)
+    assert after_exchange_fee(1.91, 0.0) == 1.91
+
+
+def test_settings_parse_books_and_fees():
+    from betmap.config import Settings
+
+    s = Settings(pull_books=" fanduel, kalshi ,", exchange_fees="kalshi:0.035, novig:0")
+    assert s.pull_book_list == ("fanduel", "kalshi")
+    assert s.fee_rates == {"kalshi": 0.035, "novig": 0.0}
+    assert "underdog" in Settings(_env_file=None).pull_book_list

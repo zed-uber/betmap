@@ -242,7 +242,7 @@ def test_edit_bet_page_and_save(client):
             line="21.5",
             odds="57c",
             stake="100",
-            book="Robinhood",
+            book="kalshi",
         ),
     )
     client.post("/bets/1/settle", data={"result": "win"})  # the mistake
@@ -254,7 +254,7 @@ def test_edit_bet_page_and_save(client):
     assert '<option value="win" selected>' in r.text
 
     form = bet_form(
-        market="totals_h1", selection="Over", line="21.5", odds="57c", stake="100", book="Robinhood"
+        market="totals_h1", selection="Over", line="21.5", odds="57c", stake="100", book="kalshi"
     ) | {"status": "loss"}
     r = client.post("/bets/1/edit", data=form)
     assert "Saved #1: Over (loss -100.00)" in r.text

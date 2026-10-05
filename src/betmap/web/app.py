@@ -20,7 +20,7 @@ from betmap.models.predict import load_predictions
 from betmap.odds.client import OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
-from betmap.odds.scan import DEVIG_CHOICES, Opportunity, last_pull_at, scan
+from betmap.odds.scan import DEVIG_CHOICES, Opportunity, last_pull_at, pickem_quotes, scan
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.tables import Bet, BetStatus
@@ -226,6 +226,7 @@ def create_app(
             max_bet_fraction=settings.max_bet_fraction,
             model_probs=load_predictions(session) if model_weight else None,
             model_weight=min(max(model_weight, 0.0), 1.0),
+            fees=settings.fee_rates,
         )
         equity = ledger.summarize(session).equity
         rows = []
@@ -238,6 +239,8 @@ def create_app(
             {
                 "rows": rows,
                 "last_pull": last_pull_at(session),
+                "pickem": pickem_quotes(session),
+                "pull_books": settings.pull_book_list,
                 "has_key": bool(settings.odds_api_key),
                 "book_filter": sorted(settings.book_set),
                 "markets": MARKET_TYPES,
@@ -275,6 +278,7 @@ def create_app(
             max_bet_fraction=settings.max_bet_fraction,
             model_probs=load_predictions(session) if model_weight else None,
             model_weight=min(max(model_weight, 0.0), 1.0),
+            fees=settings.fee_rates,
         )
         sized = size(
             candidate_positions(session, opportunities),
@@ -308,7 +312,7 @@ def create_app(
     def pull(session: SessionDep):
         try:
             client = odds_client()
-            n_events, n_snaps = pull_odds(session, client)
+            n_events, n_snaps = pull_odds(session, client, bookmakers=get_settings().pull_book_list)
         except (OddsApiError, httpx.HTTPError) as e:
             return redirect("/scan", error=f"Couldn't pull odds: {e}")
         remaining = client.quota.remaining

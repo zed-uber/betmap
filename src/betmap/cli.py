@@ -18,7 +18,7 @@ from betmap.models.predict import load_predictions, predict_props, predict_upcom
 from betmap.odds.client import GAME_MARKETS, OddsApiClient, OddsApiError
 from betmap.odds.ingest import pull_odds
 from betmap.odds.math import decimal_to_american, expected_value, kelly_fraction, parse_odds
-from betmap.odds.scan import last_pull_at, scan
+from betmap.odds.scan import last_pull_at, pickem_quotes, scan
 from betmap.portfolio.correlation import estimate_correlations
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
@@ -252,19 +252,27 @@ def odds_pull(
     props: Annotated[
         str, typer.Option(help="Prop markets, e.g. player_pass_yds; costs credits per event")
     ] = "",
-    regions: Annotated[str, typer.Option(help="Odds API regions: us, us2, eu, ...")] = "us",
+    bookmakers: Annotated[
+        str, typer.Option(help="Books to pull (default BETMAP_PULL_BOOKS); 10 cost one region")
+    ] = "",
+    regions: Annotated[
+        str, typer.Option(help="Pull whole regions instead: us, us2, us_ex, us_dfs, ...")
+    ] = "",
     days: Annotated[float, typer.Option(help="Only games kicking off within this many days")] = 7,
 ) -> None:
     """Fetch current odds from The Odds API and store a snapshot."""
+    settings = get_settings()
+    books = () if regions else (split_csv(bookmakers) or settings.pull_book_list)
     try:
-        client = OddsApiClient(get_settings().odds_api_key)
+        client = OddsApiClient(settings.odds_api_key)
         with session_scope() as s:
             n_events, n_snaps = pull_odds(
                 s,
                 client,
                 markets=split_csv(markets),
                 props=split_csv(props),
-                regions=regions,
+                regions=regions or "us",
+                bookmakers=books,
                 days=days,
             )
     except OddsApiError as e:
@@ -290,6 +298,7 @@ def odds_scan(
     settings = get_settings()
     with session_scope() as s:
         pulled = last_pull_at(s)
+        pickem = pickem_quotes(s)
         opps = scan(
             s,
             min_ev=min_ev,
@@ -301,6 +310,7 @@ def odds_scan(
             max_bet_fraction=settings.max_bet_fraction,
             model_probs=load_predictions(s) if model_weight else None,
             model_weight=model_weight,
+            fees=settings.fee_rates,
         )
         equity = ledger.summarize(s).equity
     if pulled is None:
@@ -340,6 +350,13 @@ def odds_scan(
             f"{o.kelly * equity:.2f}" if equity > 0 else f"{o.kelly:.2%}",
         )
     console.print(table if opps else "No prices above the EV threshold.")
+    if any(o.fee_adjusted for o in opps):
+        console.print("[dim]Exchange prices (e.g. Kalshi) are shown net of taker fees.[/]")
+    if pickem:
+        console.print(
+            f"[dim]{pickem} pick'em prices (Underdog etc.) stored but not scored: pick'em pays "
+            "on whole entries, not single picks.[/]"
+        )
 
 
 @results_app.command("sync")
@@ -631,6 +648,7 @@ def portfolio_size(
             max_bet_fraction=settings.max_bet_fraction,
             model_probs=load_predictions(s) if model_weight else None,
             model_weight=model_weight,
+            fees=settings.fee_rates,
         )
         candidates = candidate_positions(s, opps)
         existing, _ = open_positions(s)

@@ -73,20 +73,24 @@ def pull_odds(
     markets: tuple[str, ...] = GAME_MARKETS,
     props: tuple[str, ...] = (),
     regions: str = "us",
+    bookmakers: tuple[str, ...] = (),
     days: float = 7,
 ) -> tuple[int, int]:
-    """Fetch and store game lines, plus props per event if requested; returns (events, snapshots)."""
+    """Fetch and store game lines, plus props per event if requested; returns (events, snapshots).
+
+    `bookmakers`, when given, replaces `regions`.
+    """
     fetched_at = utcnow()
     n_events, n_snaps = 0, 0
     if markets:
         n_events, n_snaps = ingest_events(
-            session, client.game_odds(markets, regions, days), fetched_at
+            session, client.game_odds(markets, regions, days, bookmakers), fetched_at
         )
     if props:
         events = client.events(days)
         for data in events:
             n_snaps += ingest_event(
-                session, client.event_odds(data["id"], props, regions), fetched_at
+                session, client.event_odds(data["id"], props, regions, bookmakers), fetched_at
             )
         n_events = max(n_events, len(events))
     return n_events, n_snaps

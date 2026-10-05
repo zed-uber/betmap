@@ -86,3 +86,16 @@ def test_api_error_surfaces_message(session):
 def test_missing_key():
     with pytest.raises(OddsApiError, match="not set"):
         OddsApiClient("")
+
+
+def test_pull_with_bookmakers_replaces_regions(session):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=[game()], headers=quota_headers(490, 1))
+
+    pull_odds(session, fake_client(handler), bookmakers=("fanduel", "kalshi", "underdog"))
+    assert seen[0]["bookmakers"] == "fanduel,kalshi,underdog" and "regions" not in seen[0]
+    pull_odds(session, fake_client(handler), regions="us,us_ex")
+    assert seen[1]["regions"] == "us,us_ex" and "bookmakers" not in seen[1]
