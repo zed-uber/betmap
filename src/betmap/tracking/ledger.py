@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from betmap.tables import BankrollEntry, Bet, BetStatus, utcnow
+from betmap.tables import BankrollEntry, Bet, BetKind, BetLeg, BetStatus, Event, utcnow
+from betmap.teams import matchup
 
 
 def record_transfer(
@@ -94,6 +95,8 @@ def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
     status = BetStatus(changes.pop("status", bet.status))
 
     if any(f in changes and changes[f] != getattr(bet, f) for f in IDENTITY_FIELDS):
+        if bet.is_parlay:
+            raise ValueError("a parlay's legs can't be edited; void it and log it again")
         bet.event_id = None
         bet.market_id = None
         bet.closing_price = None
@@ -112,9 +115,71 @@ def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
     return bet
 
 
-def settle_bet(
-    session: Session, bet_id: int, result: BetStatus, closing_price: float | None = None
+def place_parlay(
+    session: Session,
+    *,
+    legs: list[dict],
+    book: str,
+    price: float,
+    stake: float,
+    fair_prob: float | None = None,
+    notes: str | None = None,
 ) -> Bet:
+    """Log a parlay as one bet with its legs.
+
+    Each leg dict has market_type, selection, and optionally line, event_id, market_id,
+    price (the leg's own odds), and fair_prob. `price` is the parlay's price: the product of
+    the legs for a cross-game parlay, or the book's quoted price for a same-game parlay.
+    """
+    if len(legs) < 2:
+        raise ValueError("a parlay needs at least two legs")
+    games = []
+    for leg in legs:
+        event = session.get(Event, leg["event_id"]) if leg.get("event_id") else None
+        label = matchup(event.away_team, event.home_team) if event else None
+        if label and label not in games:
+            games.append(label)
+
+    def short(leg: dict) -> str:
+        line = leg.get("line")
+        return leg["selection"] + ("" if line is None else f" {line:g}")
+
+    bet = place_bet(
+        session,
+        event_label=" / ".join(games) or "parlay",
+        market_type="parlay",
+        selection=f"{len(legs)}-leg: " + " + ".join(short(leg) for leg in legs),
+        book=book,
+        price=price,
+        stake=stake,
+        fair_prob=fair_prob,
+        notes=notes,
+    )
+    bet.kind = BetKind.PARLAY
+    for leg in legs:
+        bet.legs.append(
+            BetLeg(
+                event_id=leg.get("event_id"),
+                market_id=leg.get("market_id"),
+                market_type=leg["market_type"],
+                selection=leg["selection"],
+                line=leg.get("line"),
+                price=leg.get("price"),
+                fair_prob=leg.get("fair_prob"),
+            )
+        )
+    session.flush()
+    return bet
+
+
+def settle_bet(
+    session: Session,
+    bet_id: int,
+    result: BetStatus,
+    closing_price: float | None = None,
+    payout_amount: float | None = None,
+) -> Bet:
+    """Grade an open bet. `payout_amount` overrides the usual payout (parlays with pushed legs)."""
     bet = session.get(Bet, bet_id)
     if bet is None:
         raise ValueError(f"no bet with id {bet_id}")
@@ -123,7 +188,9 @@ def settle_bet(
     if result == BetStatus.OPEN:
         raise ValueError("cannot settle a bet as open")
     bet.status = result
-    bet.payout = payout(result, bet.stake, bet.price)
+    bet.payout = (
+        payout_amount if payout_amount is not None else payout(result, bet.stake, bet.price)
+    )
     if closing_price is not None:
         bet.closing_price = closing_price
     bet.settled_at = utcnow()

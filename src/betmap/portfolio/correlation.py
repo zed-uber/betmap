@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from statistics import fmean, pstdev
 
 import numpy as np
+from scipy.stats import multivariate_normal, norm
 
 from betmap.backtest.props import PROP_FLOORS
 from betmap.models.prop_model import MARKETS_BY_GROUP, POSITION_GROUP, stat_value
@@ -158,6 +159,25 @@ def correlation_matrix(legs: list[Leg]) -> np.ndarray:
         d = np.sqrt(np.diag(corr))
         corr = corr / np.outer(d, d)
     return corr
+
+
+def joint_probability(parts: list[tuple[Leg, float]]) -> float:
+    """P(every leg wins), exact under the copula: independent across games, and a
+    multivariate normal probability within each game."""
+    by_game: dict[int, list[tuple[Leg, float]]] = defaultdict(list)
+    for leg, prob in parts:
+        by_game[leg.game].append((leg, prob))
+    total = 1.0
+    for group in by_game.values():
+        if len(group) == 1:
+            total *= group[0][1]
+            continue
+        corr = correlation_matrix([leg for leg, _ in group])
+        # A leg wins when z > ppf(1 - p); P(all z > t) = P(all -z < -t) and -z has the
+        # same correlation matrix, with -t = ppf(p).
+        upper = norm.ppf(np.clip([prob for _, prob in group], 1e-6, 1 - 1e-6))
+        total *= float(multivariate_normal(mean=np.zeros(len(group)), cov=corr).cdf(upper))
+    return total
 
 
 def estimate_correlations(player_rows: list[dict], schedule_rows: list[dict]) -> dict:

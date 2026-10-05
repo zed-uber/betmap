@@ -6,12 +6,23 @@ Anything that can't be graded with confidence is reported with a reason, never g
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from statistics import median
+from typing import Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from betmap.tables import Bet, BetStatus, Event, Market, OddsSnapshot, PlayerGameStat, as_utc
+from betmap.tables import (
+    Bet,
+    BetLeg,
+    BetStatus,
+    Event,
+    Market,
+    OddsSnapshot,
+    PlayerGameStat,
+    as_utc,
+)
 from betmap.teams import abbr, full_name
 from betmap.tracking import ledger
 
@@ -45,12 +56,35 @@ PROP_STATS: dict[str, Callable[[PlayerGameStat], int]] = {
 }
 
 
+class Wager(Protocol):
+    market_type: str
+    selection: str
+    line: float | None
+
+
+@dataclass(frozen=True)
+class Pick:
+    """A selection to grade that isn't a stored bet (e.g. a model prediction)."""
+
+    market_type: str
+    selection: str
+    line: float | None
+
+
+@dataclass(frozen=True)
+class Grade:
+    status: BetStatus | None  # None: not graded
+    reason: str = ""
+    needs_manual: bool = False  # True when waiting won't help
+
+
 @dataclass
 class GradeOutcome:
     bet: Bet
     status: BetStatus | None  # None: not graded
     reason: str = ""
     needs_manual: bool = False  # True when waiting won't help
+    payout: float | None = None  # set when it differs from the usual (parlays with pushes)
 
 
 def normalize_name(name: str) -> str:
@@ -87,7 +121,16 @@ def find_event(session: Session, bet: Bet) -> Event | None:
         market = session.get(Market, bet.market_id)
         if market is not None:
             return market.event
-    teams = LABEL_SPLIT.split(bet.event_label.strip())
+    return event_for_label(session, bet.event_label, bet.placed_at)
+
+
+def event_for_label(session: Session, label: str, near: datetime) -> Event | None:
+    """The game a label like 'KC @ BUF' (or 'KC at BUF') names, nearest to `near`.
+
+    Nearest covers bets logged ahead of time, live, or after the fact; rematches are
+    weeks apart, so it isn't ambiguous.
+    """
+    teams = LABEL_SPLIT.split(label.strip())
     if len(teams) != 2:
         return None
     away, home = (full_name(t.strip()) for t in teams)
@@ -95,11 +138,8 @@ def find_event(session: Session, bet: Bet) -> Event | None:
         ((Event.home_team == home) & (Event.away_team == away))
         | ((Event.home_team == away) & (Event.away_team == home))
     )
-    # The meeting nearest to when the bet was logged: covers bets logged ahead of time,
-    # live, or after the fact. Rematches are weeks apart, so this isn't ambiguous.
-    placed = as_utc(bet.placed_at)
     candidates = [e for e in session.scalars(query) if e.kickoff]
-    return min(candidates, key=lambda e: abs(as_utc(e.kickoff) - placed), default=None)
+    return min(candidates, key=lambda e: abs(as_utc(e.kickoff) - as_utc(near)), default=None)
 
 
 def market_total(session: Session, event: Event) -> float | None:
@@ -128,12 +168,14 @@ def _over_under(value: float, line: float, side: str) -> BetStatus:
     return _compare(value - line if side == "over" else line - value)
 
 
-def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
-    def manual(reason: str) -> GradeOutcome:
-        return GradeOutcome(bet, None, reason, needs_manual=True)
+def grade_wager(session: Session, bet: Wager, event: Event) -> Grade:
+    """Grade one selection (a straight bet, a parlay leg, or a Pick) against the final result."""
+
+    def manual(reason: str) -> Grade:
+        return Grade(None, reason, needs_manual=True)
 
     if not event.is_final:
-        return GradeOutcome(bet, None, "game not final")
+        return Grade(None, "game not final")
     market = base_market(bet.market_type)
     home, away = event.home_score, event.away_score
 
@@ -146,7 +188,7 @@ def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
             if bet.line is None:
                 return manual("spread bet has no line")
             margin += bet.line
-        return GradeOutcome(bet, _compare(margin))
+        return Grade(_compare(margin))
 
     if market == "totals":
         side = bet.selection.strip().lower()
@@ -158,7 +200,7 @@ def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
                 f"line {bet.line:g} is far from the game total {books_total:g}; "
                 "if it's a team total, change the market to team_totals"
             )
-        return GradeOutcome(bet, _over_under(home + away, bet.line, side))
+        return Grade(_over_under(home + away, bet.line, side))
 
     if market == "team_totals":
         parsed = parse_prop_selection(bet.selection)  # 'WAS Over'
@@ -166,7 +208,7 @@ def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
         if not team or parsed[1] not in ("over", "under") or bet.line is None:
             return manual("team total needs a selection like 'WAS Over' and a line")
         points = home if team == "home" else away
-        return GradeOutcome(bet, _over_under(points, bet.line, parsed[1]))
+        return Grade(_over_under(points, bet.line, parsed[1]))
 
     if market in PROP_STATS:
         parsed = parse_prop_selection(bet.selection)
@@ -178,7 +220,7 @@ def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
         ).all()
         if not rows:
             # nflverse box scores usually land the morning after the game.
-            return GradeOutcome(bet, None, "box score not available yet")
+            return Grade(None, "box score not available yet")
         wanted = normalize_name(player)
         row = next((r for r in rows if normalize_name(r.player_name) == wanted), None)
         if row is None:
@@ -187,12 +229,80 @@ def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
         value = PROP_STATS[market](row)
         if side in ("yes", "no"):
             scored = value >= 1
-            return GradeOutcome(bet, BetStatus.WIN if scored == (side == "yes") else BetStatus.LOSS)
+            return Grade(BetStatus.WIN if scored == (side == "yes") else BetStatus.LOSS)
         if bet.line is None:
             return manual("over/under prop has no line")
-        return GradeOutcome(bet, _over_under(value, bet.line, side))
+        return Grade(_over_under(value, bet.line, side))
 
     return manual(f"no automatic grading for {bet.market_type}")
+
+
+def grade(session: Session, bet: Bet, event: Event) -> GradeOutcome:
+    g = grade_wager(session, bet, event)
+    return GradeOutcome(bet, g.status, g.reason, g.needs_manual)
+
+
+def _leg_event(session: Session, leg: BetLeg) -> Event | None:
+    if leg.event_id is not None:
+        return session.get(Event, leg.event_id)
+    if leg.market_id is not None:
+        market = session.get(Market, leg.market_id)
+        return market.event if market else None
+    return None
+
+
+def grade_parlay(session: Session, bet: Bet, dry_run: bool = False) -> GradeOutcome:
+    """Grade each open leg, then the parlay: any losing leg loses it; once every leg is in,
+    pushed or void legs drop out (their price is divided out of the parlay's price).
+
+    A pushed leg that shares a game with another leg goes to manual settling: books reprice
+    same-game parlays, so the payout can't be derived.
+    """
+    statuses: list[str] = []
+    waiting = None
+    for i, leg in enumerate(bet.legs, 1):
+        status = leg.status
+        if status == BetStatus.OPEN:
+            event = _leg_event(session, leg)
+            if event is None:
+                return GradeOutcome(bet, None, f"leg {i}: no game linked", needs_manual=True)
+            g = grade_wager(session, leg, event)
+            if g.needs_manual:
+                return GradeOutcome(bet, None, f"leg {i}: {g.reason}", needs_manual=True)
+            if g.status is None:
+                waiting = waiting or f"leg {i}: {g.reason}"
+            else:
+                status = g.status
+                if not dry_run:
+                    leg.status = g.status
+        statuses.append(status)
+    if BetStatus.LOSS in statuses:
+        return GradeOutcome(bet, BetStatus.LOSS)
+    if waiting:
+        return GradeOutcome(bet, None, waiting)
+
+    dropped = [
+        leg
+        for leg, st in zip(bet.legs, statuses, strict=True)
+        if st in (BetStatus.PUSH, BetStatus.VOID)
+    ]
+    if len(dropped) == len(bet.legs):
+        return GradeOutcome(bet, BetStatus.PUSH)  # stake back
+    games = [leg.event_id for leg in bet.legs]
+    for leg in dropped:
+        if leg.event_id is not None and games.count(leg.event_id) > 1:
+            return GradeOutcome(
+                bet,
+                None,
+                "a same-game leg pushed; settle with the book's payout",
+                needs_manual=True,
+            )
+        if not leg.price:
+            return GradeOutcome(bet, None, "a pushed leg has no price recorded", needs_manual=True)
+    divisor = 1.0
+    for leg in dropped:
+        divisor *= leg.price
+    return GradeOutcome(bet, BetStatus.WIN, payout=bet.stake * bet.price / divisor)
 
 
 def settle_open_bets(session: Session, dry_run: bool = False) -> list[GradeOutcome]:
@@ -202,6 +312,12 @@ def settle_open_bets(session: Session, dry_run: bool = False) -> list[GradeOutco
         select(Bet).where(Bet.status == BetStatus.OPEN).order_by(Bet.id)
     ).all()
     for bet in open_bets:
+        if bet.is_parlay:
+            outcome = grade_parlay(session, bet, dry_run)
+            if outcome.status is not None and not dry_run:
+                ledger.settle_bet(session, bet.id, outcome.status, payout_amount=outcome.payout)
+            outcomes.append(outcome)
+            continue
         event = find_event(session, bet)
         if event is None:
             outcomes.append(

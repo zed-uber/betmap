@@ -17,7 +17,9 @@ from betmap.config import get_settings
 from betmap.odds.client import PICKEM_BOOKS
 from betmap.odds.math import after_exchange_fee, devig
 from betmap.odds.scan import line_key, selection_label, usable_market
-from betmap.tables import Bet, Event, Market, OddsSnapshot, as_utc, utcnow
+from betmap.portfolio.correlation import joint_probability
+from betmap.portfolio.positions import make_leg
+from betmap.tables import Bet, BetLeg, Event, Market, OddsSnapshot, as_utc, utcnow
 from betmap.tracking.grading import (
     find_event,
     normalize_name,
@@ -105,7 +107,7 @@ def consensus(
 
 
 def closing_line(
-    session: Session, bet: Bet, event: Event, method: str = "power"
+    session: Session, bet: Bet | BetLeg, event: Event, method: str = "power"
 ) -> ClosingLine | None:
     market = find_market(session, bet, event)
     if market is None:
@@ -123,11 +125,33 @@ def closing_line(
     return ClosingLine(fair, own, complete, max(s.fetched_at for s in quotes))
 
 
+def _fill_parlay(session: Session, bet: Bet, now) -> int:
+    """Close each leg; once all have a closing fair prob, the parlay's is their joint one."""
+    parts = []
+    for leg in bet.legs:
+        event = session.get(Event, leg.event_id) if leg.event_id else None
+        if event is None or event.kickoff is None:
+            return 0
+        if leg.closing_fair_prob is None and as_utc(event.kickoff) <= now:
+            close = closing_line(session, leg, event)
+            if close is not None:
+                leg.closing_fair_prob = close.fair_prob
+        made = make_leg(session, event, leg.market_type, leg.selection)
+        if leg.closing_fair_prob is None or made is None:
+            return 0
+        parts.append((made, leg.closing_fair_prob))
+    bet.closing_fair_prob = joint_probability(parts)
+    return 1
+
+
 def fill_closing_lines(session: Session) -> int:
     """Record closing lines for bets whose game has kicked off; returns bets updated."""
     now = utcnow()
     updated = 0
     for bet in session.scalars(select(Bet).where(Bet.closing_fair_prob.is_(None))):
+        if bet.is_parlay:
+            updated += _fill_parlay(session, bet, now)
+            continue
         event = find_event(session, bet)
         if event is None or event.kickoff is None or as_utc(event.kickoff) > now:
             continue

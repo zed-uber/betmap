@@ -84,10 +84,17 @@ class Prediction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BetKind(StrEnum):
+    STRAIGHT = "straight"
+    PARLAY = "parlay"
+
+
 class Bet(Base):
     __tablename__ = "bets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Parlays are one bet (price = the parlay's price) with their legs in bet_legs.
+    kind: Mapped[str | None] = mapped_column(String, default=BetKind.STRAIGHT)
     # Linked market when the bet came from ingested odds; manual bets may leave it empty.
     market_id: Mapped[int | None] = mapped_column(ForeignKey("markets.id"))
     # The game this bet is on, once matched (via market_id or the event label).
@@ -109,6 +116,14 @@ class Bet(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None]
 
+    legs: Mapped[list["BetLeg"]] = relationship(
+        back_populates="bet", order_by="BetLeg.id", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_parlay(self) -> bool:
+        return self.kind == BetKind.PARLAY
+
     @property
     def profit(self) -> float | None:
         return None if self.payout is None else self.payout - self.stake
@@ -124,6 +139,34 @@ class Bet(Base):
         if self.closing_price is not None:
             return self.price / self.closing_price - 1
         return None
+
+
+class BetLeg(Base):
+    """One selection in a parlay. Graded like a straight bet; the parlay settles from its legs."""
+
+    __tablename__ = "bet_legs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bet_id: Mapped[int] = mapped_column(ForeignKey("bets.id"), index=True)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    market_id: Mapped[int | None] = mapped_column(ForeignKey("markets.id"))
+    market_type: Mapped[str]
+    selection: Mapped[str]
+    line: Mapped[float | None]
+    price: Mapped[float | None]  # this leg's own decimal price, for reference
+    fair_prob: Mapped[float | None]  # fair win probability when placed
+    status: Mapped[str] = mapped_column(String, default=BetStatus.OPEN)
+    closing_fair_prob: Mapped[float | None] = mapped_column(Float)
+
+    bet: Mapped[Bet] = relationship(back_populates="legs")
+
+    @property
+    def book(self) -> str:
+        return self.bet.book
+
+    @property
+    def placed_at(self) -> datetime:
+        return self.bet.placed_at
 
 
 class BankrollEntry(Base):
