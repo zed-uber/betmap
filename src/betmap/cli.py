@@ -24,6 +24,7 @@ from betmap.odds.scan import board, last_pull_at, pickem_quotes, scan
 from betmap.portfolio.correlation import estimate_correlations
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
+from betmap.sources import load_nfelo, record_opinions
 from betmap.tables import Bet, BetStatus, Market, Slate, as_utc, utcnow
 from betmap.tracking import ledger
 from betmap.tracking.grading import event_for_label
@@ -569,6 +570,14 @@ def model_predict(
                     + ", ".join(unmatched[:10])
                     + (" ..." if len(unmatched) > 10 else "")
                 )
+        # Second opinions, recorded so `model evaluate` can judge them too.
+        with session_scope() as s:
+            settings = get_settings()
+            entries = board(s, fees=settings.fee_rates)
+            recorded = record_opinions(s, entries, load_nfelo())
+        console.print(
+            "Recorded " + ", ".join(f"{n} {name}" for name, n in recorded.items()) + " opinions"
+        )
     except StatsUnavailable as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None

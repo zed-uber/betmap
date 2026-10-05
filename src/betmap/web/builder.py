@@ -14,6 +14,7 @@ from betmap.builder import slates as sl
 from betmap.config import get_settings
 from betmap.odds.math import parse_odds
 from betmap.odds.scan import BoardEntry, board, last_pull_at
+from betmap.sources import LABELS, load_nfelo, opinions
 from betmap.tables import Slate, SlateItem, SlateLeg, SlateStatus
 from betmap.tracking import ledger
 
@@ -89,6 +90,7 @@ def add_builder_routes(
         entries = _board(session)
         shown = _filter(entries, game, market, q, ev)
         view = _evaluate(session, current, entries) if current else None
+        notes = opinions(session, entries, load_nfelo())
         building = session.get(SlateItem, parlay) if parlay else None
         if building is not None and (current is None or building.slate_id != current.id):
             building = None
@@ -108,6 +110,8 @@ def add_builder_routes(
                 "back": str(request.url.path)
                 + ("?" + request.url.query if request.url.query else ""),
                 "last_pull": last_pull_at(session),
+                "opinions": notes,
+                "source_labels": LABELS,
                 "error": error,
                 "msg": msg,
             },

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Builder · betmap{% endblock %}
+{% macro chips(o) %}{% if o %}<span class="opinions">{% for src, p in o.probs.items() %}<span class="op {{ 'pos' if p > o.breakeven else 'neg' }}{{ ' diverge' if src in o.divergent }}" title="{{ source_labels[src] }}: {{ '%.1f%%' % (p * 100) }}{{ ' (differs from consensus by over 5 points)' if src in o.divergent }}">{{ source_labels[src] }} {{ '%.0f' % (p * 100) }}</span>{% endfor %}{% if o.probs | length >= 2 %}<span class="agree" title="Sources that make the best price +EV">{{ o.agree }}/{{ o.probs | length }}</span>{% endif %}</span>{% endif %}{% endmacro %}
 {% macro line(e) %}{% if e.line is not none %} {{ ('%+g' if e.market_type.endswith('spreads') else '%g') % e.line }}{% endif %}{% endmacro %}
 {% block content %}
 <section class="panel builder-bar">
@@ -34,7 +35,7 @@
   </form>
   {% if rows %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Game</th><th>Market</th><th>Selection</th><th class="num">Best</th><th class="num" title="Devigged consensus of the other books">Fair</th><th class="num">EV</th><th class="num">Books</th>{% if slate %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th>Game</th><th>Market</th><th>Selection</th><th class="num">Best</th><th class="num" title="Devigged consensus of the other books">Fair</th><th class="num">EV</th><th title="Second opinions (% chance). Green: the best price is +EV by that source. The count is how many agree it's +EV. They don't change fair prices or stakes.">Opinions</th><th class="num">Books</th>{% if slate %}<th></th>{% endif %}</tr></thead>
     <tbody>
     {% for e in rows %}
       <tr>
@@ -44,6 +45,7 @@
         <td class="num">{{ e.best.price | american }} <span class="muted">{{ e.best.book }}</span></td>
         <td class="num muted">{{ '%.1f%%' % (e.fair_prob * 100) }}</td>
         <td class="num {{ 'pos' if e.ev > 0 else 'neg' }}">{{ e.ev | pct }}</td>
+        <td>{{ chips(opinions.get(e.key)) }}</td>
         <td class="num muted">{{ e.n_books }}</td>
         {% if slate %}<td class="actions">
           {% for kind, label in (('straight', '+ Bet'), ('parlay', '+ Leg' if building else '+ Parlay')) %}
@@ -94,6 +96,7 @@
     <ul class="leg-list">
       {% for lv in v.legs %}<li>
         {% if lv.entry %}{{ lv.entry.event_label }} · {{ lv.entry.selection }}{{ line(lv.entry) }} <span class="muted">{{ lv.entry.market_type }}</span>{% else %}{{ lv.leg.side }}{% if lv.leg.line is not none %} {{ '%g' % lv.leg.line }}{% endif %}{% endif %}
+        {% if lv.entry %}{{ chips(opinions.get(lv.entry.key)) }}{% endif %}
         {% if lv.entry is none %}<span class="tag neg">gone</span>{% elif lv.moved %}<span class="tag" title="Was {{ lv.leg.price_at_add | american }} when added">moved</span>{% endif %}
         <form method="post" action="/slates/legs/{{ lv.leg.id }}/remove" class="inline"><input type="hidden" name="back" value="{{ back }}"><button type="submit" class="link" aria-label="Remove leg">✕</button></form>
       </li>{% endfor %}

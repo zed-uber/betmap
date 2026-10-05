@@ -73,10 +73,10 @@ def predict_upcoming(
         if prob is not None:
             predictions[(market.id, snap.side, snap.line)] = prob
 
-    return _store(session, MODEL_NAME, predictions)
+    return store_predictions(session, MODEL_NAME, predictions)
 
 
-def _store(
+def store_predictions(
     session: Session, model: str, predictions: dict[tuple[int, str, float | None], float]
 ) -> int:
     """Replace `model`'s predictions for the markets in `predictions`."""
@@ -148,7 +148,7 @@ def predict_props(
         prob = prop_side_probability(dist, snap.side, snap.line)
         if prob is not None:
             predictions[(market.id, snap.side, snap.line)] = prob
-    return _store(session, PROP_MODEL_NAME, predictions), sorted(unmatched)
+    return store_predictions(session, PROP_MODEL_NAME, predictions), sorted(unmatched)
 
 
 def load_predictions(

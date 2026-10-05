@@ -109,3 +109,8 @@ button.link:hover { color: var(--neg); }
 .place-form { margin-top: .75rem; }
 .hint.neg { color: var(--neg); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.opinions { display: inline-flex; flex-wrap: wrap; gap: .2rem; align-items: center; }
+.op { font-size: .72rem; padding: 0 .3rem; border-radius: 4px; background: var(--tag-bg); white-space: nowrap; }
+.op.pos { color: var(--pos); } .op.neg { color: var(--muted); }
+.op.diverge { outline: 1px dashed currentColor; }
+.agree { font-size: .72rem; font-weight: 600; color: var(--muted); }
