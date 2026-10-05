@@ -22,13 +22,19 @@ class Settings(BaseSettings):
 
     # Books to pull, as Odds API keys. Every 10 cost one region's worth of credits, so this
     # list costs the same as pulling just the "us" region. Empty means pull the "us" region.
+    # Pinnacle (the sharpest book) is here as a second opinion, not a place to bet.
     pull_books: str = (
-        "fanduel,draftkings,betmgm,betrivers,lowvig,betonlineag,kalshi,polymarket,novig,underdog"
+        "fanduel,draftkings,betmgm,betrivers,lowvig,pinnacle,kalshi,polymarket,novig,underdog"
     )
 
     # Exchange taker fees as book:rate, applied as rate x price x (1 - price) per $1 contract
     # (Kalshi's formula; some Kalshi sports series use half the rate).
     exchange_fees: str = "kalshi:0.07"
+
+    # nfelo's published game predictions (github.com/greerreNFL/nfelo), cached in cache_dir.
+    nfelo_url: str = (
+        "https://raw.githubusercontent.com/greerreNFL/nfelo/main/output_data/nfelo_games.csv"
+    )
 
     @property
     def book_set(self) -> set[str]:

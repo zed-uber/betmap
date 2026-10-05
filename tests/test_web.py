@@ -12,7 +12,7 @@ from betmap.odds.client import OddsApiClient
 from betmap.tables import Bet
 from betmap.web.app import create_app
 
-from .odds_fixtures import game
+from .odds_fixtures import book, game
 
 
 def shared_engine():
@@ -400,3 +400,19 @@ def test_builder_errors():
     assert r.url.path == "/builder" and "Renamed" in r.text
     r = client.post("/slates/1/delete", data={"back": "/slates"})
     assert "Deleted" in r.text and "No drafts" in r.text
+
+
+def test_builder_shows_second_opinions():
+    from betmap.db import session_scope
+    from betmap.odds.ingest import ingest_events
+
+    from .odds_fixtures import h2h
+
+    engine = shared_engine()
+    client = TestClient(create_app(engine))
+    data = game()
+    data["bookmakers"].append(book("pinnacle", {"h2h": h2h(1.70, 2.25)}))
+    with session_scope(engine) as s:
+        ingest_events(s, [data])
+    page = client.get("/builder?market=h2h").text
+    assert 'class="op' in page and "Pinnacle 57" in page and "Opinions" in page

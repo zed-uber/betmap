@@ -90,7 +90,7 @@ betmap odds scan [--min-ev 0.02] [--market spreads] [--all-books]
 
 **Which books.** Pulls request the books in `BETMAP_PULL_BOOKS` rather than a region. Every 10
 books cost the same credits as one region, so the default list (FanDuel, DraftKings, BetMGM,
-BetRivers, LowVig, BetOnline, Kalshi, Polymarket, Novig, Underdog) costs what the `us` region
+BetRivers, LowVig, Pinnacle, Kalshi, Polymarket, Novig, Underdog) costs what the `us` region
 alone did while adding exchanges and pick'em. Kalshi stands in for Robinhood, whose sports
 contracts are listed on exchanges like Kalshi; log those bets with book `kalshi`.
 
@@ -217,6 +217,25 @@ The web **Builder** page is where you put a bet card together:
 betmap slate list | show ID | compare ID ID ... | place ID
 ```
 
+**Second opinions.** Each board row and slate leg also shows other sources' probability for
+that side, green when it makes the best price +EV, with a count of how many agree (`3/4`).
+A dashed outline marks a source more than 5 points from the consensus. They don't change fair
+prices, EV, or stakes:
+
+- **Pinnacle**: the sharpest sportsbook, devigged at that exact line (pulled in the default
+  book list for no extra credits; it's an opinion, not a place to bet).
+- **Exchanges**: Kalshi, Polymarket, and Novig devigged and averaged, skipping thin markets.
+- **nfelo** ([greerreNFL/nfelo](https://github.com/greerreNFL/nfelo)): an open-source NFL
+  model's win probability and projected spread (moneylines and spreads only). Downloaded at
+  most daily into `data/cache` (`BETMAP_NFELO_URL`, empty to turn off). nfelo publishes each
+  week's games during that week, and it leans toward the market by design. Its repo has no
+  license, so use the data for your own analysis only.
+- **betmap**: the game and prop models (`model predict`).
+
+`betmap model predict` also records Pinnacle, exchange, and nfelo probabilities, so
+`betmap model evaluate` scores each source against the closing line over time. Once one
+consistently beats the close, it's a candidate to blend into fair prices.
+
 ### Portfolio: joint risk and sizing
 
 ```sh
@@ -263,3 +282,5 @@ margin.
   including non-default multipliers, and choose which legs to combine, using the portfolio's
   correlation model to prefer (or avoid) linked legs. Underdog prices are already pulled and
   stored for when this is built.
+- ~~Bet builder: full board, parlays (incl. same-game), saved slates, compare, place~~ ✅
+- ~~Second opinions next to each bet (Pinnacle, exchanges, nfelo, betmap models)~~ ✅
