@@ -19,6 +19,9 @@ GAME_MARKETS = ("h2h", "spreads", "totals")
 # Pick'em (DFS) sites pay multipliers on multi-pick entries, so a single pick's listed
 # price isn't a bet you can make. Stored, but kept out of the consensus and the scan.
 PICKEM_BOOKS = frozenset({"underdog", "prizepicks", "dabble_us_dfs", "pick6"})
+# Exchanges and prediction markets: no sportsbook-style parlays (combos, where offered, are
+# priced by the venue), so parlays are only auto-priced at sportsbooks.
+EXCHANGE_BOOKS = frozenset({"kalshi", "polymarket", "novig", "prophetx", "betopenly"})
 
 
 class OddsApiError(Exception):

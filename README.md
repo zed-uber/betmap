@@ -62,6 +62,20 @@ to manual settling, because books reprice those. A parlay's CLV uses each leg's 
 combined with the portfolio correlation model when legs share a game. Legs can't be edited;
 void the parlay and log it again.
 
+Price a parlay before betting it:
+
+```sh
+betmap parlay price --leg "TB @ DAL|h2h|DAL" --leg "DET @ ARI|h2h|DET"
+betmap parlay price --leg "TB @ DAL|spreads|DAL|-9.5" --leg "TB @ DAL|totals|Over|47.5" --odds +250
+```
+
+Legs are matched to upcoming games in the latest pull. The fair probability is the chance every
+leg wins: each leg's consensus fair probability, combined with the portfolio correlation model
+(legs in different games are independent, so it's their product). Cross-game parlays are priced
+at the sportsbook paying the most for all the legs (exchanges don't sell parlays); same-game
+parlays need `--odds` with the book's quoted price, since books price those themselves. The
+"as if independent" figure shows how much correlation moved the fair price.
+
 Fair prob accepts `0.54`, `54`, or `54%`. In the web form, a rejected entry keeps what you typed
 and highlights the field to fix.
 
