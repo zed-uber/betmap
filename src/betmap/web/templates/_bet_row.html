@@ -1,7 +1,9 @@
 <td class="muted">{{ b.placed_at.strftime('%b %d') }}</td>
 <td>{{ b.event_label }}</td>
 <td><span class="tag">{{ b.market_type }}</span></td>
-<td>{{ b.selection }}{% if b.line is not none %} <span class="muted">{{ '%g' % b.line }}</span>{% endif %}</td>
+<td>{% if b.is_parlay %}<details class="legs"><summary>{{ b.selection }}</summary><ul>
+  {% for leg in b.legs %}<li><span class="status status-{{ leg.status }}">{{ leg.status }}</span> {{ leg.selection }}{% if leg.line is not none %} {{ '%g' % leg.line }}{% endif %} <span class="muted">{{ leg.market_type }}{% if leg.price %} · {{ leg.price | american }}{% endif %}</span></li>{% endfor %}
+</ul></details>{% else %}{{ b.selection }}{% if b.line is not none %} <span class="muted">{{ '%g' % b.line }}</span>{% endif %}{% endif %}</td>
 <td class="num">{{ b.price | american }}</td>
 <td class="num">{{ b.stake | money }}</td>
 <td>{{ b.book }}</td>

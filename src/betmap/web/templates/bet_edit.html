@@ -8,6 +8,10 @@
     <span class="muted">placed {{ bet.placed_at.strftime('%b %d') }}{% if bet.settled_at %} · settled {{ bet.settled_at.strftime('%b %d') }}{% endif %}</span>
     <a class="more" href="/bets">← all bets</a>
   </h2>
+  {% if bet.is_parlay %}
+  <p class="hint">Parlay legs (read-only; to change a leg, void this bet and log it again):</p>
+  <ul class="leg-list">{% for leg in bet.legs %}<li><span class="status status-{{ leg.status }}">{{ leg.status }}</span> {{ leg.selection }}{% if leg.line is not none %} {{ '%g' % leg.line }}{% endif %} <span class="muted">{{ leg.market_type }}</span></li>{% endfor %}</ul>
+  {% endif %}
   <form method="post" action="/bets/{{ bet.id }}/edit" class="grid-form">
     <label>Event <input name="event" value="{{ prefill.event }}" required></label>
     <label>Market

@@ -277,3 +277,24 @@ def test_edit_bet_bad_input_keeps_values(client):
 
 def test_edit_missing_bet(client):
     assert "No bet #9" in client.get("/bets/9/edit").text
+
+
+def test_parlay_shows_legs_on_bets_and_edit_pages():
+    from sqlalchemy.orm import Session as OrmSession
+
+    from betmap.tracking import ledger
+
+    engine = shared_engine()
+    client = TestClient(create_app(engine))
+    with OrmSession(engine) as s:
+        legs = [
+            {"market_type": "h2h", "selection": "BUF", "price": 1.8},
+            {"market_type": "totals", "selection": "Over", "line": 47.5, "price": 1.91},
+        ]
+        ledger.place_parlay(s, legs=legs, book="fanduel", price=3.44, stake=10)
+        s.commit()
+    r = client.get("/bets")
+    assert '<details class="legs"><summary>2-leg: BUF + Over 47.5</summary>' in r.text
+    assert "Over 47.5" in r.text and "status-open" in r.text
+    r = client.get("/bets/1/edit")
+    assert "Parlay legs (read-only" in r.text

@@ -46,6 +46,22 @@ Odds accept American (`-110`, `+150`), decimal (`1.91`), or a prediction-market 
 prices are taken before fees; for Kalshi, add its fee per contract to the price
 (0.07 x 0.57 x 0.43 ≈ 1.7c, so 57c → `58.7c`).
 
+Parlays are one bet with legs:
+
+```sh
+betmap bet parlay --leg "KC @ BUF|spreads|BUF|-2.5" --leg "NE @ NYJ|totals|Over|41.5" \
+    --odds +264 --stake 10 --book fanduel
+```
+
+Each `--leg` is `event|market|selection|line` (an optional fifth part is the leg's own odds).
+`--odds` is the parlay price the book quotes: the product of the legs for a cross-game
+parlay, or the book's own price for a same-game parlay. Results sync grades every leg: a losing
+leg loses the parlay right away; once all legs are in, pushed or void legs drop out of a
+cross-game parlay (their odds are divided out of the payout). A push in a same-game parlay goes
+to manual settling, because books reprice those. A parlay's CLV uses each leg's closing line,
+combined with the portfolio correlation model when legs share a game. Legs can't be edited;
+void the parlay and log it again.
+
 Fair prob accepts `0.54`, `54`, or `54%`. In the web form, a rejected entry keeps what you typed
 and highlights the field to fix.
 

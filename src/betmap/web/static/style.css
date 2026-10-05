@@ -88,3 +88,6 @@ input[aria-invalid="true"] { border-color: var(--neg); background: var(--err-bg)
   outline-color: var(--neg); }
 .panel.narrow { max-width: 760px; }
 form.inline a.edit { align-self: center; font-size: .85rem; margin-left: .25rem; }
+details.legs summary { cursor: pointer; }
+details.legs ul, ul.leg-list { margin: .3rem 0 0; padding-left: 1rem; white-space: normal; }
+details.legs li, ul.leg-list li { list-style: none; font-size: .85rem; }

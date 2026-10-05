@@ -17,15 +17,30 @@ from betmap.portfolio.correlation import correlation_matrix, pair_correlation
 from betmap.portfolio.positions import Position
 
 
+def _thresholds(probs) -> np.ndarray:
+    return norm.ppf(1 - np.clip(probs, 1e-6, 1 - 1e-6))
+
+
 def simulate_returns(positions: list[Position], n: int = 20_000, seed: int = 0) -> np.ndarray:
-    """(n, len(positions)) profit per unit staked: price - 1 on a win, -1 on a loss."""
+    """(n, len(positions)) profit per unit staked: price - 1 on a win, -1 on a loss.
+
+    Every leg of every position gets its own latent variable; a parlay wins only if all
+    of its legs do.
+    """
     if not positions:
         return np.zeros((n, 0))
-    corr = correlation_matrix([p.leg for p in positions])
+    owner, legs, probs = [], [], []
+    for i, p in enumerate(positions):
+        for leg, prob in p.components:
+            owner.append(i)
+            legs.append(leg)
+            probs.append(prob)
+    corr = correlation_matrix(legs)
     rng = np.random.default_rng(seed)
-    latent = rng.standard_normal((n, len(positions))) @ np.linalg.cholesky(corr).T
-    thresholds = norm.ppf(1 - np.clip([p.prob for p in positions], 1e-6, 1 - 1e-6))
-    wins = latent > thresholds
+    latent = rng.standard_normal((n, len(legs))) @ np.linalg.cholesky(corr).T
+    leg_wins = latent > _thresholds(probs)
+    owner = np.array(owner)
+    wins = np.column_stack([leg_wins[:, owner == i].all(axis=1) for i in range(len(positions))])
     prices = np.array([p.price for p in positions])
     return np.where(wins, prices - 1, -1.0)
 
@@ -69,7 +84,11 @@ def overlaps(positions: list[Position], threshold: float = 0.25) -> list[Overlap
     found = []
     for i, a in enumerate(positions):
         for b in positions[i + 1 :]:
-            c = pair_correlation(a.leg, b.leg)
+            # For parlays, the most strongly linked pair of legs.
+            c = max(
+                (pair_correlation(x, y) for x, _ in a.components for y, _ in b.components),
+                key=abs,
+            )
             if abs(c) >= threshold:
                 found.append(Overlap(a, b, c))
     return sorted(found, key=lambda o: -abs(o.correlation))

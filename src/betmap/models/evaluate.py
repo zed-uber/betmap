@@ -15,9 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from betmap.odds.scan import selection_label
-from betmap.tables import Bet, BetStatus, Event, Market, Prediction, utcnow
+from betmap.tables import BetStatus, Event, Market, Prediction
 from betmap.tracking.clv import closing_quotes, consensus
-from betmap.tracking.grading import grade
+from betmap.tracking.grading import Pick, grade_wager
 
 
 @dataclass
@@ -58,18 +58,8 @@ def evaluate(session: Session) -> Evaluation:
         line_id = (pred.model, market.id, abs(pred.line) if pred.line is not None else None)
         if line_id in seen:
             continue
-        # Grade the predicted side as if it were a bet (never stored).
-        probe = Bet(
-            event_label="",
-            market_type=market.market_type,
-            selection=selection_label(market, pred.side, event),
-            line=pred.line,
-            book="",
-            price=2.0,
-            stake=1.0,
-            placed_at=utcnow(),
-        )
-        outcome = grade(session, probe, event)
+        pick = Pick(market.market_type, selection_label(market, pred.side, event), pred.line)
+        outcome = grade_wager(session, pick, event)
         if outcome.status is None:
             result.pending += 1
             continue

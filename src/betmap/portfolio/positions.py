@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from betmap.models.prop_model import POSITION_GROUP
 from betmap.odds.scan import Opportunity
-from betmap.portfolio.correlation import Leg
-from betmap.tables import Bet, BetStatus, Event, Market, PlayerGameStat
+from betmap.portfolio.correlation import Leg, joint_probability
+from betmap.tables import Bet, BetLeg, BetStatus, Event, Market, PlayerGameStat
 from betmap.teams import abbr, matchup
 from betmap.tracking.grading import (
     find_event,
@@ -32,6 +32,12 @@ class Position:
     stake: float = 0.0  # already staked (open bets); 0 for candidates
     bet_id: int | None = None
     opportunity: Opportunity | None = None
+    # Parlays: every (leg, fair prob) that must win; `leg` is the first, `prob` the joint.
+    parts: list[tuple[Leg, float]] | None = None
+
+    @property
+    def components(self) -> list[tuple[Leg, float]]:
+        return self.parts if self.parts else [(self.leg, self.prob)]
 
 
 def _player_info(session: Session, player: str, event: Event) -> tuple[int, str | None]:
@@ -82,6 +88,13 @@ def open_positions(session: Session) -> tuple[list[Position], list[Bet]]:
     """Open bets as positions; also returns bets that couldn't be interpreted."""
     positions, skipped = [], []
     for bet in session.scalars(select(Bet).where(Bet.status == BetStatus.OPEN)):
+        if bet.is_parlay:
+            position = parlay_position(session, bet)
+            if position is None:
+                skipped.append(bet)
+            else:
+                positions.append(position)
+            continue
         event = find_event(session, bet)
         leg = event and make_leg(session, event, bet.market_type, bet.selection)
         if leg is None:
@@ -107,6 +120,51 @@ def open_positions(session: Session) -> tuple[list[Position], list[Bet]]:
             )
         )
     return positions, skipped
+
+
+def leg_probability(leg: BetLeg) -> float:
+    if leg.closing_fair_prob is not None:
+        return leg.closing_fair_prob
+    if leg.fair_prob is not None:
+        return leg.fair_prob
+    return 1 / leg.price / ASSUMED_OVERROUND if leg.price else 0.5
+
+
+def parlay_position(session: Session, bet: Bet) -> Position | None:
+    """An open parlay as one position over its still-open legs (legs already won drop out)."""
+    parts, games = [], []
+    for leg in bet.legs:
+        if leg.status != BetStatus.OPEN:
+            continue
+        event = session.get(Event, leg.event_id) if leg.event_id else None
+        made = event and make_leg(session, event, leg.market_type, leg.selection)
+        if made is None:
+            return None
+        parts.append((made, leg_probability(leg)))
+        label = matchup(event.away_team, event.home_team)
+        if label not in games:
+            games.append(label)
+    if not parts:
+        return None
+    sources = {
+        "closing"
+        if leg.closing_fair_prob is not None
+        else "fair"
+        if leg.fair_prob is not None
+        else "assumed"
+        for leg in bet.legs
+    }
+    return Position(
+        label=f"#{bet.id} {bet.selection}",
+        game_label=" / ".join(games),
+        leg=parts[0][0],
+        price=bet.price,
+        prob=joint_probability(parts),
+        prob_source="assumed" if "assumed" in sources else "fair",
+        stake=bet.stake,
+        bet_id=bet.id,
+        parts=parts,
+    )
 
 
 def candidate_positions(session: Session, opportunities: list[Opportunity]) -> list[Position]:

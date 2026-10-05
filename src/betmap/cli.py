@@ -22,8 +22,9 @@ from betmap.odds.scan import last_pull_at, pickem_quotes, scan
 from betmap.portfolio.correlation import estimate_correlations
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
-from betmap.tables import Bet, BetStatus, Market
+from betmap.tables import Bet, BetStatus, Market, utcnow
 from betmap.tracking import ledger
+from betmap.tracking.grading import event_for_label
 from betmap.tracking.results import update_results
 
 app = typer.Typer(
@@ -110,6 +111,51 @@ def bet_add(
         ev = expected_value(fair_prob, price)
         kelly = kelly_fraction(fair_prob, price) * get_settings().kelly_fraction
         console.print(f"  EV {ev:+.1%}, fractional Kelly suggests {kelly:.2%} of bankroll")
+
+
+def parse_leg(spec: str) -> dict:
+    """'KC @ BUF|spreads|BUF|-2.5' or 'KC @ BUF|h2h|BUF' (an optional 5th part is the leg's odds)."""
+    parts = [p.strip() for p in spec.split("|")]
+    if len(parts) < 3:
+        raise ValueError(f"leg '{spec}' needs at least event|market|selection")
+    leg = {"event": parts[0], "market_type": parts[1], "selection": parts[2]}
+    leg["line"] = float(parts[3]) if len(parts) > 3 and parts[3] else None
+    leg["price"] = parse_odds(parts[4]) if len(parts) > 4 and parts[4] else None
+    return leg
+
+
+@bet_app.command("parlay")
+def bet_parlay(
+    leg: Annotated[
+        list[str],
+        typer.Option(
+            help='Repeat per leg: "KC @ BUF|spreads|BUF|-2.5" (event|market|selection|line)'
+        ),
+    ],
+    odds: Annotated[str, typer.Option(help="The parlay's price, as the book quotes it")],
+    stake: Annotated[float, typer.Option()],
+    book: Annotated[str, typer.Option()],
+    fair_prob: Annotated[float | None, typer.Option(help="Your fair win probability, 0-1")] = None,
+    notes: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Log a parlay (legs are graded automatically once their games are final)."""
+    try:
+        legs = [parse_leg(spec) for spec in leg]
+        with session_scope() as s:
+            for item in legs:
+                event = event_for_label(s, item.pop("event"), utcnow())
+                if event is None:
+                    raise ValueError(f"no game matches the event for leg {item['selection']}")
+                item["event_id"] = event.id
+            bet = ledger.place_parlay(
+                s, legs=legs, book=book, price=parse_odds(odds), stake=stake,
+                fair_prob=fair_prob, notes=notes,
+            )  # fmt: skip
+            label = f"#{bet.id} {bet.selection} {fmt_odds(bet.price)} for {bet.stake:.2f} at {book}"
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"Logged parlay {label}")
 
 
 @bet_app.command("list")
