@@ -277,10 +277,37 @@ margin.
 
 ## Planned features
 
-- **Underdog pick'em entries** ⚠️ *Needs detailed review before planning.* Score pick'em
-  properly: model entry payouts (e.g. 2-pick 3x means each leg must hit ~57.7% to break even),
-  including non-default multipliers, and choose which legs to combine, using the portfolio's
-  correlation model to prefer (or avoid) linked legs. Underdog prices are already pulled and
-  stored for when this is built.
+- **Underdog pick'em entries and typed bets** ⚠️ *Needs detailed review before planning.*
+  Score pick'em properly and widen what a slate can hold, in roughly this order:
+  1. *Groundwork.* Placed bets link back to the slate and item they came from (today only a
+     parlay's notes mention the slate, and straights keep nothing). Bets get a `source`
+     column (`manual`, or the model that suggested them, e.g. `synergy-v1`), set when the
+     bet is placed and never changed afterward, so each model's suggestions can be scored on
+     their own.
+  2. *Tags.* Key-value tags on slates and bets, for grouping and filtering:
+     `scenario=shootout`, `window=sun-early`, `experiment=fade-public`. Stored in their own
+     tables (`slate_tags`, `bet_tags`) with real foreign keys. A key can have several values,
+     since one parlay can play two scenarios. Keys are lowercased and trimmed, and a short
+     list of known keys feeds autocomplete without being enforced. Tags are copied onto bets
+     when they're placed, so editing or deleting a slate never rewrites history. The rule:
+     anything the code acts on (kind, source) gets a real column; tags are only for
+     grouping. A bet's thesis is prose and goes in `notes`.
+  3. *Typed bets.* A bet's kind (straight, parlay, same-game parlay, pick'em entry, and later
+     a DFS lineup) decides how it's priced, graded, and simulated, with kind-specific detail
+     stored alongside. A slate can then mix kinds: a set of Underdog entries, or a spread,
+     a total, and a same-game parlay on one game.
+  4. *Pick'em entries.* Model entry payouts (e.g. 2-pick 3x means each leg must hit ~57.7%
+     to break even), including non-default multipliers, and power vs flex entries. Flex
+     entries pay even when some picks miss, so `simulate_returns` must handle partial
+     payouts, not just win-or-lose. Choose which legs to combine, using the portfolio's
+     correlation model to prefer (or avoid) linked legs. Underdog prices are already pulled
+     and stored for when this is built.
+  5. *Scenario coverage.* In the builder, a grid with each scenario tag as a row and each
+     bet as a column, with P&L in the cells, to show whether a package only pays in one
+     narrow outcome. If scenarios later need outcome conditions (e.g. "total over 55 and
+     both QBs over 300 yards"), promote them from tags to their own table.
+  6. *Later: DFS lineups.* A DraftKings lineup is graded on fantasy points against a contest
+     field, so its payout depends on other entries. It fits in the typed bet, but pricing it
+     is a separate project.
 - ~~Bet builder: full board, parlays (incl. same-game), saved slates, compare, place~~ ✅
 - ~~Second opinions next to each bet (Pinnacle, exchanges, nfelo, betmap models)~~ ✅
