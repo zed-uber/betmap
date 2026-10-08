@@ -134,12 +134,15 @@ def test_edit_bet_identity_change_clears_links(session):
         ({"fair_prob": 1.5}, "between 0 and 1"),
         ({"status": "lost"}, "not a valid"),
         ({"placed_at": None}, "can't edit placed_at"),
+        ({"source": "synergy-v1"}, "can't edit source"),  # fixed once placed
+        ({"slate_id": None}, "can't edit slate_id"),
     ],
 )
 def test_edit_bet_rejects_bad_values(session, changes, message):
     bet = ledger.place_bet(
         session, event_label="x", market_type="h2h", selection="A", book="dk", price=2.0, stake=10
     )
+    assert bet.source == "manual"
     with pytest.raises(ValueError, match=message):
         ledger.edit_bet(session, bet.id, **changes)
     with pytest.raises(ValueError, match="no bet with id 99"):

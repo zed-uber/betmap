@@ -375,6 +375,9 @@ def test_builder_flow():
     r = client.post("/slates/1/place", data={"back": "/builder?slate=1"})
     assert r.url.path == "/bets" and "Placed &#39;Sunday main&#39;: 2 bets" in r.text
     assert "2-leg: BUF + BUF -2.5" in r.text and "fanduel" in r.text
+    assert r.text.count("· Sunday main") == 2  # each bet shows the slate it came from
+    r = client.post("/slates/1/delete", data={"back": "/slates"})
+    assert "Couldn&#39;t delete" in r.text and "already placed" in r.text
     r = client.post(
         "/slates/1/add", data=board_form(client, "NYJ", "straight") | {"back": "/builder?slate=1"}
     )

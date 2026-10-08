@@ -211,7 +211,11 @@ The web **Builder** page is where you put a bet card together:
   expected bankroll growth, and bets that are linked to each other or to what you already hold.
 - **Duplicate** a slate to try a variation, then compare them side by side on the Slates page;
   growth is the best single number to choose by. **Place** logs every item with a stake to your
-  bets (parlays with their legs), ready for results sync.
+  bets (parlays with their legs), ready for results sync. Each bet links back to the slate
+  and item it came from (shown next to it on the Bets page) and records its **source**:
+  `manual`, or the model that built the slate. The source is fixed once placed, so each
+  model's suggestions can be scored on their own. Placed slates can't be deleted, since
+  they're the record of their bets; only drafts can.
 
 ```sh
 betmap slate list | show ID | compare ID ID ... | place ID
@@ -279,7 +283,7 @@ margin.
 
 - **Underdog pick'em entries and typed bets** ⚠️ *Needs detailed review before planning.*
   Score pick'em properly and widen what a slate can hold, in roughly this order:
-  1. *Groundwork.* Placed bets link back to the slate and item they came from (today only a
+  1. ✅ *Groundwork.* Placed bets link back to the slate and item they came from (today only a
      parlay's notes mention the slate, and straights keep nothing). Bets get a `source`
      column (`manual`, or the model that suggested them, e.g. `synergy-v1`), set when the
      bet is placed and never changed afterward, so each model's suggestions can be scored on

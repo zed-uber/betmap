@@ -14,7 +14,7 @@ from betmap.builder.pricing import ParlayQuote, leg_for, price_parlay
 from betmap.odds.scan import BoardEntry
 from betmap.portfolio.optimize import Overlap, Risk, overlaps, risk, simulate_returns, size
 from betmap.portfolio.positions import Position, open_positions
-from betmap.tables import BetKind, Slate, SlateItem, SlateLeg, SlateStatus
+from betmap.tables import MANUAL, BetKind, Slate, SlateItem, SlateLeg, SlateStatus
 from betmap.tracking import ledger
 
 # --- editing -------------------------------------------------------------------------------
@@ -36,9 +36,17 @@ def create_slate(session: Session, name: str) -> Slate:
     return slate
 
 
+def delete_slate(session: Session, slate: Slate) -> None:
+    """Delete a draft. Placed slates stay: they're the record of the bets placed from them."""
+    _draft(slate)
+    session.delete(slate)
+    session.flush()
+
+
 def duplicate_slate(session: Session, slate: Slate, name: str | None = None) -> Slate:
     """A draft copy, to try a variation and compare it with the original."""
     copy = create_slate(session, name or f"{slate.name} (copy)")
+    copy.source = slate.source
     for item in slate.items:
         new = SlateItem(
             kind=item.kind,
@@ -280,7 +288,10 @@ def evaluate_slate(
 
 
 def place_slate(session: Session, view: SlateView) -> list:
-    """Log every item with a stake: straights as bets, parlays as parlays with legs."""
+    """Log every item with a stake: straights as bets, parlays as parlays with legs.
+
+    Each bet links back to the slate and item it came from and takes the slate's source.
+    """
     slate = _draft(view.slate)
     to_place = [v for v in view.items if v.stake > 0]
     if not to_place:
@@ -290,6 +301,7 @@ def place_slate(session: Session, view: SlateView) -> list:
     ]
     if blocked:
         raise ValueError("fix these first: " + " | ".join(blocked))
+    source = slate.source or MANUAL
     bets = []
     for v in to_place:
         entries = [leg.entry for leg in v.legs]
@@ -307,6 +319,7 @@ def place_slate(session: Session, view: SlateView) -> list:
                     stake=v.stake,
                     fair_prob=v.fair_prob,
                     market_id=e.market_id,
+                    source=source,
                 )
             )
             bets[-1].event_id = e.event_id
@@ -331,9 +344,11 @@ def place_slate(session: Session, view: SlateView) -> list:
                     price=v.price,
                     stake=v.stake,
                     fair_prob=v.fair_prob,
-                    notes=f"from slate '{slate.name}'",
+                    source=source,
                 )
             )
+        bets[-1].slate_id = slate.id
+        bets[-1].slate_item_id = v.item.id
     slate.status = SlateStatus.PLACED
     session.flush()
     return bets

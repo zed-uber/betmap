@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from betmap.tables import BankrollEntry, Bet, BetKind, BetLeg, BetStatus, Event, utcnow
+from betmap.tables import MANUAL, BankrollEntry, Bet, BetKind, BetLeg, BetStatus, Event, utcnow
 from betmap.teams import matchup
 
 
@@ -33,6 +33,7 @@ def place_bet(
     fair_prob: float | None = None,
     notes: str | None = None,
     market_id: int | None = None,
+    source: str = MANUAL,
 ) -> Bet:
     if stake <= 0:
         raise ValueError("stake must be positive")
@@ -49,6 +50,7 @@ def place_bet(
         fair_prob=fair_prob,
         notes=notes,
         market_id=market_id,
+        source=source,
     )
     session.add(bet)
     session.flush()
@@ -124,6 +126,7 @@ def place_parlay(
     stake: float,
     fair_prob: float | None = None,
     notes: str | None = None,
+    source: str = MANUAL,
 ) -> Bet:
     """Log a parlay as one bet with its legs.
 
@@ -154,6 +157,7 @@ def place_parlay(
         stake=stake,
         fair_prob=fair_prob,
         notes=notes,
+        source=source,
     )
     bet.kind = BetKind.PARLAY
     for leg in legs:
