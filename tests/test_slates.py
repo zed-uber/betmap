@@ -7,6 +7,7 @@ from betmap.builder.slates import (
     add_straight,
     add_to_parlay,
     create_slate,
+    delete_slate,
     draft_slates,
     duplicate_slate,
     evaluate_slate,
@@ -154,10 +155,33 @@ def test_place_slate_logs_bets_and_parlays(session):
     assert straight.market_id is not None and straight.event_id is not None
     assert par.kind == BetKind.PARLAY and par.stake == 10 and len(par.legs) == 2
     assert all(leg.event_id and leg.market_id and leg.fair_prob for leg in par.legs)
-    assert par.notes == "from slate 'Go'"
+    assert par.notes is None
+    assert all(b.slate is slate and b.source == "manual" for b in bets)
+    assert [b.slate_item_id for b in bets] == [slate.items[0].id, parlay.id]
     assert len(session.scalars(select(Bet)).all()) == 2
     with pytest.raises(ValueError, match="already placed"):
         add_straight(session, slate, entry(entries, "NYJ", "h2h"))
+    with pytest.raises(ValueError, match="already placed"):  # it's the record of its bets
+        delete_slate(session, slate)
+
+
+def test_placed_bets_take_the_slates_source(session):
+    entries = board(session)
+    slate = create_slate(session, "Suggested")
+    slate.source = "synergy-v1"
+    item = add_straight(session, slate, entry(entries, "BUF", "spreads", -2.5))
+    update_item(session, item, stake=10)
+    copy = duplicate_slate(session, slate)
+    assert copy.source == "synergy-v1"  # a variation of the suggestion is still the model's
+    [bet] = place_slate(session, evaluate(session, slate))
+    assert bet.source == "synergy-v1" and bet.slate_item_id == item.id
+
+
+def test_delete_draft_slate(session):
+    slate = create_slate(session, "Scratch")
+    add_straight(session, slate, entry(board(session), "BUF", "h2h"))
+    delete_slate(session, slate)
+    assert draft_slates(session) == []
 
 
 def test_place_refuses_problems_and_empty_slates(session):

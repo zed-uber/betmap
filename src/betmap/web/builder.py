@@ -210,7 +210,10 @@ def add_builder_routes(
         slate = session.get(Slate, slate_id)
         if slate is None:
             return _back(back, error=f"No slate #{slate_id}")
-        session.delete(slate)
+        try:
+            sl.delete_slate(session, slate)
+        except ValueError as e:
+            return _back(back, error=f"Couldn't delete: {e}")
         return _back(back, slate="", parlay="", msg=f"Deleted '{slate.name}'")
 
     @app.post("/slates/{slate_id}/place")

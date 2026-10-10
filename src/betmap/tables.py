@@ -84,6 +84,9 @@ class Prediction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+MANUAL = "manual"  # bet and slate source when no model suggested it
+
+
 class BetKind(StrEnum):
     STRAIGHT = "straight"
     PARLAY = "parlay"
@@ -115,10 +118,18 @@ class Bet(Base):
     closing_fair_prob: Mapped[float | None] = mapped_column(Float)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None]
+    # Who chose the bet: "manual", or the model that suggested it. Set when placed and never
+    # edited, so each model's suggestions can be scored on their own. None: logged before
+    # sources were recorded (all of those were manual).
+    source: Mapped[str | None] = mapped_column(String, default=MANUAL)
+    # The slate and item it was placed from, if any.
+    slate_id: Mapped[int | None] = mapped_column(ForeignKey("slates.id"), index=True)
+    slate_item_id: Mapped[int | None] = mapped_column(ForeignKey("slate_items.id"))
 
     legs: Mapped[list["BetLeg"]] = relationship(
         back_populates="bet", order_by="BetLeg.id", cascade="all, delete-orphan"
     )
+    slate: Mapped["Slate | None"] = relationship()
 
     @property
     def is_parlay(self) -> bool:
@@ -223,6 +234,8 @@ class Slate(Base):
     name: Mapped[str]
     status: Mapped[str] = mapped_column(String, default=SlateStatus.DRAFT)
     notes: Mapped[str | None]
+    # "manual", or the model that built it; copied onto its bets when placed.
+    source: Mapped[str | None] = mapped_column(String, default=MANUAL)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
