@@ -91,22 +91,29 @@ form.inline a.edit { align-self: center; font-size: .85rem; margin-left: .25rem;
 details.legs summary { cursor: pointer; }
 details.legs ul, ul.leg-list { margin: .3rem 0 0; padding-left: 1rem; white-space: normal; }
 details.legs li, ul.leg-list li { list-style: none; font-size: .85rem; }
-.builder { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 1rem; align-items: start; }
-@media (max-width: 1000px) { .builder { grid-template-columns: 1fr; } }
 .builder-bar { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
-.slate-panel { position: sticky; top: 1rem; }
-.slate-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
-.slate-item { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .7rem; margin-bottom: .6rem; }
-.slate-item.has-problem { border-color: var(--neg); }
-.item-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
-.item-form { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; margin-top: .4rem; }
-.item-form label { display: flex; flex-direction: column; font-size: .75rem; color: var(--muted); }
-.item-form input { color: var(--text); padding: .2rem .4rem; }
+.slate-head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; margin-bottom: .5rem; }
+.slate-head h2 { margin: 0; }
+.slate-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+table.slate-items td { vertical-align: top; }
+table.slate-items td.bet-cell { white-space: normal; width: 100%; min-width: 16rem; }
+table.slate-items ul.leg-list { margin: 0; padding-left: 0; }
+table.slate-items ul.leg-list li { margin-bottom: .2rem; }
+table.slate-items ul.leg-list li:last-child { margin-bottom: 0; }
+table.slate-items input { color: var(--text); padding: .2rem .4rem; font-size: .85rem; }
+table.slate-items .add-legs { font-size: .85rem; margin: .2rem 0 0; }
+.leg-list form.inline, td.actions form.inline { display: inline-flex; vertical-align: middle; }
+table.slate-items tr.has-problem td:first-child { box-shadow: inset 3px 0 0 var(--neg); }
+table.slate-items tr.building td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.slate-summary { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: center;
+  justify-content: space-between; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.slate-summary .facts { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; }
+.slate-summary .facts dt { font-size: .75rem; }
+.slate-summary .facts dd { text-align: left; font-weight: 600; }
 td.actions { white-space: nowrap; }
 td.actions form.inline button { padding: .15rem .45rem; font-size: .8rem; }
 button.link { background: none; border: 0; color: var(--muted); padding: 0 .2rem; }
 button.link:hover { color: var(--neg); }
-.place-form { margin-top: .75rem; }
 .hint.neg { color: var(--neg); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .opinions { display: inline-flex; flex-wrap: wrap; gap: .2rem; align-items: center; }
