@@ -3,13 +3,20 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from sqlalchemy import select
 
 from betmap.backtest.games import backtest
 from betmap.backtest.props import backtest_props
 from betmap.builder.pricing import board_event, find_entry, price_parlay
-from betmap.builder.slates import draft_slates, evaluate_slate, place_slate
+from betmap.builder.slates import (
+    draft_slates,
+    evaluate_slate,
+    place_slate,
+    set_slate_tags,
+    update_item,
+)
 from betmap.config import get_settings
 from betmap.data import nflverse
 from betmap.data.nflverse import StatsUnavailable
@@ -26,6 +33,7 @@ from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.sources import load_nfelo, record_opinions
 from betmap.tables import Bet, BetStatus, Market, Slate, as_utc, utcnow
+from betmap.tags import edit_tags, format_tags, parse_tags, tagged
 from betmap.tracking import ledger
 from betmap.tracking.grading import event_for_label
 from betmap.tracking.results import update_results
@@ -86,6 +94,40 @@ def withdraw(amount: float, book: Annotated[str | None, typer.Option()] = None) 
     console.print(f"Withdrew {amount:.2f}")
 
 
+# Shared tag options. Each --tag/--untag may hold one tag or several ("a=b c=d").
+TagOpt = Annotated[
+    list[str] | None,
+    typer.Option("--tag", help="Add a key=value tag, e.g. scenario=shootout (repeatable)"),
+]
+UntagOpt = Annotated[
+    list[str] | None,
+    typer.Option("--untag", help="Remove a tag; a bare key removes all its values (repeatable)"),
+]
+ClearTagsOpt = Annotated[
+    bool, typer.Option("--clear-tags", help="Remove all tags first (then --tag adds)")
+]
+
+
+def _tag_suffix(tags) -> str:
+    return escape(f" [{format_tags(tags)}]") if tags else ""
+
+
+def _parse_tag_options(options: list[str] | None) -> list:
+    try:
+        return parse_tags(" ".join(options or []))
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+
+
+def _tag_edit(tag: list[str] | None, untag: list[str] | None, clear: bool):
+    """A function from current tags to new ones, or None when no tag option was given."""
+    if not (tag or untag or clear):
+        return None
+    add, remove = _parse_tag_options(tag), _parse_tag_options(untag)
+    return lambda current: edit_tags([(t.key, t.value) for t in current], add, remove, clear)
+
+
 @bet_app.command("add")
 def bet_add(
     event: Annotated[str, typer.Option(help='Event label, e.g. "KC @ BUF"')],
@@ -99,9 +141,11 @@ def bet_add(
     line: Annotated[float | None, typer.Option()] = None,
     fair_prob: Annotated[float | None, typer.Option(help="Your fair win probability, 0-1")] = None,
     notes: Annotated[str | None, typer.Option()] = None,
+    tag: TagOpt = None,
 ) -> None:
     """Log a placed bet."""
     price = parse_odds(odds)
+    tags = _parse_tag_options(tag)
     with session_scope() as s:
         bet = ledger.place_bet(
             s,
@@ -114,6 +158,7 @@ def bet_add(
             stake=stake,
             fair_prob=fair_prob,
             notes=notes,
+            tags=tags,
         )
     console.print(f"Logged bet #{bet.id}: {selection} {fmt_odds(price)} for {stake:.2f} at {book}")
     if fair_prob is not None:
@@ -146,8 +191,10 @@ def bet_parlay(
     book: Annotated[str, typer.Option()],
     fair_prob: Annotated[float | None, typer.Option(help="Your fair win probability, 0-1")] = None,
     notes: Annotated[str | None, typer.Option()] = None,
+    tag: TagOpt = None,
 ) -> None:
     """Log a parlay (legs are graded automatically once their games are final)."""
+    tags = _parse_tag_options(tag)
     try:
         legs = [parse_leg(spec) for spec in leg]
         with session_scope() as s:
@@ -158,7 +205,7 @@ def bet_parlay(
                 item["event_id"] = event.id
             bet = ledger.place_parlay(
                 s, legs=legs, book=book, price=parse_odds(odds), stake=stake,
-                fair_prob=fair_prob, notes=notes,
+                fair_prob=fair_prob, notes=notes, tags=tags,
             )  # fmt: skip
             label = f"#{bet.id} {bet.selection} {fmt_odds(bet.price)} for {bet.stake:.2f} at {book}"
     except ValueError as e:
@@ -170,12 +217,22 @@ def bet_parlay(
 @bet_app.command("list")
 def bet_list(
     all_: Annotated[bool, typer.Option("--all", help="Include settled bets")] = False,
+    tag: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Only bets with this tag (key=value, or a key for any value); repeat to "
+            "require several"
+        ),
+    ] = None,
 ) -> None:
     with session_scope() as s:
         query = select(Bet).order_by(Bet.placed_at)
         if not all_:
             query = query.where(Bet.status == BetStatus.OPEN)
+        for t in tag or []:
+            query = query.where(tagged(t))
         bets = s.scalars(query).all()
+        labels = {b.id: b.selection + _tag_suffix(b.tags) for b in bets}
 
     table = Table(title="Bets" if all_ else "Open bets")
     for col in (
@@ -200,7 +257,7 @@ def bet_list(
             b.placed_at.strftime("%m-%d"),
             b.event_label,
             b.market_type,
-            b.selection,
+            labels[b.id],
             "" if b.line is None else f"{b.line:g}",
             f"{decimal_to_american(b.price):+.0f}",
             f"{b.stake:.2f}",
@@ -242,8 +299,14 @@ def bet_edit(
     status: Annotated[
         BetStatus | None, typer.Option(help="win, loss, push, void, or open to un-settle")
     ] = None,
+    tag: TagOpt = None,
+    untag: UntagOpt = None,
+    clear_tags: ClearTagsOpt = False,
 ) -> None:
-    """Correct a bet. Only the options you pass change; a new status recomputes the payout."""
+    """Correct a bet. Only the options you pass change; a new status recomputes the payout.
+
+    Tags: --tag adds, --untag removes, --clear-tags drops them all first.
+    """
     changes = {
         "event_label": event,
         "market_type": market,
@@ -257,14 +320,19 @@ def bet_edit(
         "status": status,
     }
     changes = {k: v for k, v in changes.items() if v is not None}
-    if not changes:
+    retag = _tag_edit(tag, untag, clear_tags)
+    if not changes and retag is None:
         console.print("Nothing to change; pass at least one option (see --help).")
         raise typer.Exit(1)
     try:
         with session_scope() as s:
+            if retag is not None:
+                current = s.get(Bet, bet_id)
+                changes["tags"] = retag(current.tags if current else [])
             bet = ledger.edit_bet(s, bet_id, **changes)
             result = "open" if bet.status == BetStatus.OPEN else f"{bet.status}, {bet.profit:+.2f}"
             label = f"{bet.event_label} {bet.selection} {fmt_odds(bet.price)} for {bet.stake:.2f}"
+            label += _tag_suffix(bet.tags)
     except ValueError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
@@ -756,6 +824,8 @@ def _slate_views(ids: list[int]):
             if slate is None:
                 raise ValueError(f"no slate #{slate_id}")
             views.append(evaluate_now(s, slate, entries))
+            for tagged_ in (slate, *slate.items):  # load tags before the session closes
+                tagged_.tags  # noqa: B018
         return views
 
 
@@ -763,15 +833,19 @@ def _slate_views(ids: list[int]):
 def slate_list() -> None:
     """Draft slates."""
     with session_scope() as s:
-        rows = [(d.id, d.name, len(d.items), d.updated_at) for d in draft_slates(s)]
+        rows = [
+            (d.id, d.name, len(d.items), d.updated_at, format_tags(d.tags)) for d in draft_slates(s)
+        ]
     if not rows:
         console.print("No draft slates. Build one on the web Builder page.")
         return
     table = Table(title="Draft slates")
-    for col in ("ID", "Name", "Items", "Updated"):
+    for col in ("ID", "Name", "Items", "Updated", "Tags"):
         table.add_column(col)
-    for slate_id, name, items, updated in rows:
-        table.add_row(str(slate_id), name, str(items), f"{as_utc(updated).astimezone():%a %H:%M}")
+    for slate_id, name, items, updated, tags in rows:
+        table.add_row(
+            str(slate_id), name, str(items), f"{as_utc(updated).astimezone():%a %H:%M}", tags
+        )
     console.print(table)
 
 
@@ -783,12 +857,13 @@ def slate_show(slate_id: int) -> None:
     except ValueError as e:
         console.print(f"[red]{e}[/]")
         raise typer.Exit(1) from None
-    table = Table(title=f"{view.slate.name} ({view.slate.status})")
-    for col in ("Bet", "Price", "Fair", "EV", "Stake", "Problems"):
+    table = Table(title=f"{view.slate.name} ({view.slate.status})" + _tag_suffix(view.slate.tags))
+    for col in ("#", "Bet", "Price", "Fair", "EV", "Stake", "Problems"):
         table.add_column(col)
-    for v in view.items:
+    for n, v in enumerate(view.items, 1):
         table.add_row(
-            ("Parlay: " if v.item.kind == "parlay" else "") + v.label,
+            str(n),
+            ("Parlay: " if v.item.kind == "parlay" else "") + v.label + _tag_suffix(v.item.tags),
             f"{decimal_to_american(v.price):+.0f} {v.book or ''}" if v.price else "-",
             f"{v.fair_prob:.1%}" if v.fair_prob is not None else "-",
             f"{v.ev:+.1%}" if v.ev is not None else "-",
@@ -803,6 +878,42 @@ def slate_show(slate_id: int) -> None:
             f"P(loss) {r.p_loss:.0%} · 5th pct {r.p05:+.2f}"
             + (f" · growth {view.growth:+.3%}" if view.growth is not None else "")
         )
+
+
+@slate_app.command("tag")
+def slate_tag(
+    slate_id: int,
+    item: Annotated[
+        int | None, typer.Option(help="Tag one bet in the slate: its # in `slate show`")
+    ] = None,
+    tag: TagOpt = None,
+    untag: UntagOpt = None,
+    clear_tags: ClearTagsOpt = False,
+) -> None:
+    """Tag a draft slate (every bet placed from it gets these) or one bet in it (--item)."""
+    retag = _tag_edit(tag, untag, clear_tags)
+    if retag is None:
+        console.print("Pass --tag, --untag, or --clear-tags (see --help).")
+        raise typer.Exit(1)
+    try:
+        with session_scope() as s:
+            slate = s.get(Slate, slate_id)
+            if slate is None:
+                raise ValueError(f"no slate #{slate_id}")
+            if item is None:
+                set_slate_tags(s, slate, retag(slate.tags))
+                target, tags = slate.name, slate.tags
+            else:
+                if not 1 <= item <= len(slate.items):
+                    raise ValueError(f"slate #{slate_id} has items 1-{len(slate.items)}")
+                owner = slate.items[item - 1]
+                update_item(s, owner, tags=retag(owner.tags))
+                target, tags = f"{slate.name} #{item}", owner.tags
+            summary = format_tags(tags) or "no tags"
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from None
+    console.print(f"{escape(target)}: {escape(summary)}")
 
 
 @slate_app.command("compare")

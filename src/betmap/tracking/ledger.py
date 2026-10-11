@@ -3,7 +3,18 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from betmap.tables import MANUAL, BankrollEntry, Bet, BetKind, BetLeg, BetStatus, Event, utcnow
+from betmap.tables import (
+    MANUAL,
+    BankrollEntry,
+    Bet,
+    BetKind,
+    BetLeg,
+    BetStatus,
+    BetTag,
+    Event,
+    utcnow,
+)
+from betmap.tags import Pair, set_tags
 from betmap.teams import matchup
 
 
@@ -34,6 +45,7 @@ def place_bet(
     notes: str | None = None,
     market_id: int | None = None,
     source: str = MANUAL,
+    tags: list[Pair] | None = None,
 ) -> Bet:
     if stake <= 0:
         raise ValueError("stake must be positive")
@@ -52,6 +64,7 @@ def place_bet(
         market_id=market_id,
         source=source,
     )
+    set_tags(bet, tags or [], BetTag)
     session.add(bet)
     session.flush()
     return bet
@@ -73,7 +86,8 @@ IDENTITY_FIELDS = ("event_label", "market_type", "selection", "line")
 
 
 def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
-    """Change a bet's fields and/or its result ("status"; "open" un-settles it).
+    """Change a bet's fields, its `tags` (a list of pairs), and/or its result ("status";
+    "open" un-settles it).
 
     Settled bets get their payout recomputed from the new stake, price, and result.
     """
@@ -82,7 +96,7 @@ def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
         raise ValueError(f"no bet with id {bet_id}")
     allowed = {
         "event_label", "market_type", "selection", "line", "book", "price", "stake",
-        "fair_prob", "notes", "status",
+        "fair_prob", "notes", "status", "tags",
     }  # fmt: skip
     unknown = set(changes) - allowed
     if unknown:
@@ -95,6 +109,8 @@ def edit_bet(session: Session, bet_id: int, **changes) -> Bet:
     if prob is not None and not 0 < prob < 1:
         raise ValueError("fair prob must be between 0 and 1")
     status = BetStatus(changes.pop("status", bet.status))
+    if "tags" in changes:
+        set_tags(bet, changes.pop("tags"), BetTag)
 
     if any(f in changes and changes[f] != getattr(bet, f) for f in IDENTITY_FIELDS):
         if bet.is_parlay:
@@ -127,6 +143,7 @@ def place_parlay(
     fair_prob: float | None = None,
     notes: str | None = None,
     source: str = MANUAL,
+    tags: list[Pair] | None = None,
 ) -> Bet:
     """Log a parlay as one bet with its legs.
 
@@ -158,6 +175,7 @@ def place_parlay(
         fair_prob=fair_prob,
         notes=notes,
         source=source,
+        tags=tags,
     )
     bet.kind = BetKind.PARLAY
     for leg in legs:

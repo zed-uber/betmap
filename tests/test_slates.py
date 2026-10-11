@@ -101,6 +101,13 @@ def test_evaluate_prices_sizes_and_simulates(session):
     assert view.overlaps and view.overlaps[0].correlation < -0.9
 
 
+def test_evaluate_with_no_bankroll(session):
+    slate = create_slate(session, "Broke")
+    add_straight(session, slate, entry(board(session), "BUF", "h2h"))
+    view = evaluate(session, slate, equity=0.0)  # used to crash sizing nothing
+    assert view.items[0].price and view.items[0].suggested == 0 and view.total_stake == 0
+
+
 def test_evaluate_parlays(session):
     entries = board(session)
     slate = create_slate(session, "P")

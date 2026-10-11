@@ -1,0 +1,3 @@
+{# Tag chips (each links to the bets with that tag) and the autocomplete list for tag inputs. #}
+{% macro chips(tags) %}{% for t in tags %}<a class="tag tag-kv" href="/bets?tag={{ t.label | urlencode }}" title="Bets tagged {{ t.label }}">{{ t.label }}</a>{% endfor %}{% endmacro %}
+{% macro options(tag_options) %}<datalist id="tag-options">{% for o in tag_options %}<option value="{{ o }}">{% endfor %}</datalist>{% endmacro %}
