@@ -16,6 +16,7 @@ from betmap.odds.math import parse_odds
 from betmap.odds.scan import BoardEntry, board, last_pull_at
 from betmap.sources import LABELS, load_nfelo, opinions
 from betmap.tables import Slate, SlateItem, SlateLeg, SlateStatus
+from betmap.tags import format_tags, parse_tags, tag_options
 from betmap.tracking import ledger
 
 BOARD_LIMIT = 250
@@ -112,6 +113,8 @@ def add_builder_routes(
                 "last_pull": last_pull_at(session),
                 "opinions": notes,
                 "source_labels": LABELS,
+                "tag_options": tag_options(session),
+                "format_tags": format_tags,
                 "error": error,
                 "msg": msg,
             },
@@ -171,11 +174,14 @@ def add_builder_routes(
         stake: Annotated[str, Form()] = "",
         offered: Annotated[str, Form()] = "",
         book: Annotated[str, Form()] = "",
+        tags: Annotated[str | None, Form()] = None,
         back: Annotated[str, Form()] = "/builder",
     ):
         try:
             item = find(session, SlateItem, item_id)
             changes = {"stake": float(stake) if stake.strip() else None}
+            if tags is not None:
+                changes["tags"] = parse_tags(tags)
             if item.kind == "parlay":
                 changes["offered_price"] = parse_odds(offered) if offered.strip() else None
                 changes["book"] = book.strip().lower() or None
@@ -196,6 +202,19 @@ def add_builder_routes(
             return _back(back, error="A slate needs a name")
         slate.name = name.strip()
         return _back(back, msg=f"Renamed to '{slate.name}'")
+
+    @app.post("/slates/{slate_id}/tags")
+    def slate_tags(
+        session: SessionDep,
+        slate_id: int,
+        tags: Annotated[str, Form()] = "",
+        back: Annotated[str, Form()] = "/builder",
+    ):
+        try:
+            sl.set_slate_tags(session, find(session, Slate, slate_id), parse_tags(tags))
+        except ValueError as e:
+            return _back(back, error=f"Couldn't tag: {e}")
+        return _back(back, msg="Saved tags")
 
     @app.post("/slates/{slate_id}/duplicate")
     def duplicate(session: SessionDep, slate_id: int, back: Annotated[str, Form()] = "/builder"):

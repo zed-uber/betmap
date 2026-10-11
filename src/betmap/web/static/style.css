@@ -101,6 +101,7 @@ table.slate-items ul.leg-list { margin: 0; padding-left: 0; }
 table.slate-items ul.leg-list li { margin-bottom: .2rem; }
 table.slate-items ul.leg-list li:last-child { margin-bottom: 0; }
 table.slate-items input { color: var(--text); padding: .2rem .4rem; font-size: .85rem; }
+table.slate-items input.item-tags { width: 100%; max-width: 22rem; margin-top: .3rem; font-size: .8rem; }
 table.slate-items .add-legs { font-size: .85rem; margin: .2rem 0 0; }
 .leg-list form.inline, td.actions form.inline { display: inline-flex; vertical-align: middle; }
 table.slate-items tr.has-problem td:first-child { box-shadow: inset 3px 0 0 var(--neg); }
@@ -121,3 +122,6 @@ button.link:hover { color: var(--neg); }
 .op.pos { color: var(--pos); } .op.neg { color: var(--muted); }
 .op.diverge { outline: 1px dashed currentColor; }
 .agree { font-size: .72rem; font-weight: 600; color: var(--muted); }
+.tag-list { display: inline-flex; flex-wrap: wrap; gap: .2rem; vertical-align: middle; }
+a.tag-kv { text-decoration: none; color: var(--accent); }
+a.tag-kv:hover { text-decoration: underline; }

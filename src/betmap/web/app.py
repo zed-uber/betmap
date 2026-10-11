@@ -24,6 +24,7 @@ from betmap.odds.scan import DEVIG_CHOICES, Opportunity, last_pull_at, pickem_qu
 from betmap.portfolio.optimize import overlaps, risk, size
 from betmap.portfolio.positions import candidate_positions, open_positions
 from betmap.tables import Bet, BetStatus
+from betmap.tags import format_tags, parse_tags, tag_options, tagged
 from betmap.tracking import ledger
 from betmap.tracking.results import Fetch, update_results
 from betmap.web.builder import add_builder_routes
@@ -101,6 +102,13 @@ class FieldError(ValueError):
     def __init__(self, field: str, message: str):
         super().__init__(message)
         self.field = field
+
+
+def parse_tag_field(text: str) -> list:
+    try:
+        return parse_tags(text)
+    except ValueError as e:
+        raise FieldError("tags", str(e)) from None
 
 
 def parse_field[T](field: str, parse: Callable[[str], T], value: str, message: str) -> T:
@@ -197,6 +205,7 @@ def create_app(
                 "market_types": MARKET_TYPES,
                 "results": [s.value for s in BetStatus if s != BetStatus.OPEN],
                 "kelly_mult": get_settings().kelly_fraction,
+                "tag_options": tag_options(session),
                 "prefill": request.query_params,
                 "error": error,
                 "msg": msg,
@@ -324,17 +333,25 @@ def create_app(
 
     @app.get("/bets", response_class=HTMLResponse)
     def bets_page(
-        request: Request, session: SessionDep, status: str = "", error: str = "", msg: str = ""
+        request: Request,
+        session: SessionDep,
+        status: str = "",
+        tag: str = "",
+        error: str = "",
+        msg: str = "",
     ):
         query = select(Bet).order_by(Bet.placed_at.desc())
         if status:
             query = query.where(Bet.status == status)
+        if tag:
+            query = query.where(tagged(tag))
         return templates.TemplateResponse(
             request,
             "bets.html",
             {
                 "bets": session.scalars(query).all(),
                 "status": status,
+                "tag": tag,
                 "statuses": [s.value for s in BetStatus],
                 "error": error,
                 "msg": msg,
@@ -354,6 +371,7 @@ def create_app(
         fair_prob: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
         market_id: Annotated[str, Form()] = "",
+        tags: Annotated[str, Form()] = "",
     ):
         entered = {
             "event": event,
@@ -366,11 +384,15 @@ def create_app(
             "fair_prob": fair_prob,
             "notes": notes,
             "market_id": market_id,
+            "tags": tags,
         }
         try:
             fields = parse_bet_fields(entered)
             bet = ledger.place_bet(
-                session, **fields, market_id=int(market_id) if market_id.strip() else None
+                session,
+                **fields,
+                market_id=int(market_id) if market_id.strip() else None,
+                tags=parse_tag_field(tags),
             )
             price, prob = fields["price"], fields["fair_prob"]
         except ValueError as e:
@@ -420,6 +442,7 @@ def create_app(
                 "fair_prob": "" if bet.fair_prob is None else f"{bet.fair_prob:.4g}",
                 "notes": bet.notes or "",
                 "status": bet.status,
+                "tags": format_tags(bet.tags),
             }
         return templates.TemplateResponse(
             request,
@@ -429,6 +452,7 @@ def create_app(
                 "prefill": values,
                 "statuses": [s.value for s in BetStatus],
                 "market_types": MARKET_TYPES,
+                "tag_options": tag_options(session),
                 "error": error,
             },
         )
@@ -447,6 +471,7 @@ def create_app(
         line: Annotated[str, Form()] = "",
         fair_prob: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
+        tags: Annotated[str, Form()] = "",
     ):
         entered = {
             "event": event,
@@ -459,9 +484,16 @@ def create_app(
             "fair_prob": fair_prob,
             "notes": notes,
             "status": status,
+            "tags": tags,
         }
         try:
-            bet = ledger.edit_bet(session, bet_id, **parse_bet_fields(entered), status=status)
+            bet = ledger.edit_bet(
+                session,
+                bet_id,
+                **parse_bet_fields(entered),
+                status=status,
+                tags=parse_tag_field(tags),
+            )
         except ValueError as e:
             invalid = e.field if isinstance(e, FieldError) else ""
             return redirect(
