@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_tags.html" as tagm %}
 {% block title %}Edit #{{ bet.id }} · betmap{% endblock %}
 {# Marks the field the last save rejected. #}
 {% macro invalid(name) %}{% if prefill.invalid == name %} aria-invalid="true" autofocus{% endif %}{% endmacro %}
@@ -30,6 +31,8 @@
       </select>
     </label>
     <label class="wide">Notes <input name="notes" value="{{ prefill.notes }}"></label>
+    <label class="wide">Tags <input name="tags" value="{{ prefill.tags }}"{{ invalid("tags") }} list="tag-options" placeholder="key=value, space-separated: scenario=shootout window=sun-early" autocomplete="off"></label>
+    {{ tagm.options(tag_options) }}
     <button type="submit" class="primary wide">Save</button>
   </form>
   <p class="hint">Changing the result recomputes the payout; "open" un-settles the bet. Changing the

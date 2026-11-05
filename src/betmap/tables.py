@@ -130,6 +130,7 @@ class Bet(Base):
         back_populates="bet", order_by="BetLeg.id", cascade="all, delete-orphan"
     )
     slate: Mapped["Slate | None"] = relationship()
+    tags: Mapped[list["BetTag"]] = relationship(order_by="BetTag.id", cascade="all, delete-orphan")
 
     @property
     def is_parlay(self) -> bool:
@@ -244,6 +245,9 @@ class Slate(Base):
     items: Mapped[list["SlateItem"]] = relationship(
         back_populates="slate", order_by="SlateItem.position", cascade="all, delete-orphan"
     )
+    tags: Mapped[list["SlateTag"]] = relationship(
+        order_by="SlateTag.id", cascade="all, delete-orphan"
+    )
 
 
 class SlateItem(Base):
@@ -263,6 +267,9 @@ class SlateItem(Base):
     legs: Mapped[list["SlateLeg"]] = relationship(
         back_populates="item", order_by="SlateLeg.id", cascade="all, delete-orphan"
     )
+    tags: Mapped[list["SlateItemTag"]] = relationship(
+        order_by="SlateItemTag.id", cascade="all, delete-orphan"
+    )
 
 
 class SlateLeg(Base):
@@ -279,3 +286,41 @@ class SlateLeg(Base):
     price_at_add: Mapped[float | None]
 
     item: Mapped[SlateItem] = relationship(back_populates="legs")
+
+
+# --- tags (see betmap.tags) ----------------------------------------------------------------
+
+
+class _Tag:
+    """`key=value`, or a bare `key` (value ""). Lowercased; one owner can repeat a key."""
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str]
+    value: Mapped[str] = mapped_column(String, default="")
+
+    @property
+    def label(self) -> str:
+        return f"{self.key}={self.value}" if self.value else self.key
+
+
+class SlateTag(_Tag, Base):
+    __tablename__ = "slate_tags"
+    __table_args__ = (UniqueConstraint("slate_id", "key", "value"),)
+
+    slate_id: Mapped[int] = mapped_column(ForeignKey("slates.id"), index=True)
+
+
+class SlateItemTag(_Tag, Base):
+    __tablename__ = "slate_item_tags"
+    __table_args__ = (UniqueConstraint("item_id", "key", "value"),)
+
+    item_id: Mapped[int] = mapped_column(ForeignKey("slate_items.id"), index=True)
+
+
+class BetTag(_Tag, Base):
+    """Copied from the slate and item when placed, so later slate edits don't change it."""
+
+    __tablename__ = "bet_tags"
+    __table_args__ = (UniqueConstraint("bet_id", "key", "value"),)
+
+    bet_id: Mapped[int] = mapped_column(ForeignKey("bets.id"), index=True)

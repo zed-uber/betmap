@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_tags.html" as tagm %}
 {% block title %}Builder · betmap{% endblock %}
 {% macro chips(o) %}{% if o %}<span class="opinions">{% for src, p in o.probs.items() %}<span class="op {{ 'pos' if p > o.breakeven else 'neg' }}{{ ' diverge' if src in o.divergent }}" title="{{ source_labels[src] }}: {{ '%.1f%%' % (p * 100) }}{{ ' (differs from consensus by over 5 points)' if src in o.divergent }}">{{ source_labels[src] }} {{ '%.0f' % (p * 100) }}</span>{% endfor %}{% if o.probs | length >= 2 %}<span class="agree" title="Sources that make the best price +EV">{{ o.agree }}/{{ o.probs | length }}</span>{% endif %}</span>{% endif %}{% endmacro %}
 {% macro line(e) %}{% if e.line is not none %} {{ ('%+g' if e.market_type.endswith('spreads') else '%g') % e.line }}{% endif %}{% endmacro %}
@@ -36,8 +37,13 @@
       <form method="post" action="/slates/{{ slate.id }}/duplicate" class="inline">
         <input type="hidden" name="back" value="{{ back }}"><button type="submit" title="Copy this slate to try a variation">Duplicate</button>
       </form>
+      <form method="post" action="/slates/{{ slate.id }}/tags" class="inline" title="Tags for the whole slate; every bet placed from it gets them">
+        <input name="tags" value="{{ format_tags(slate.tags) }}" aria-label="Slate tags" placeholder="slate tags: window=sun-early" size="28" list="tag-options" autocomplete="off">
+        <input type="hidden" name="back" value="{{ back }}"><button type="submit">Tag</button>
+      </form>
     </div>
   </div>
+  {{ tagm.options(tag_options) }}
   {% if building %}<p class="flash flash-ok">Building a parlay ({{ building.legs | length }} leg{{ '' if building.legs | length == 1 else 's' }}): use <b>+ Leg</b> on the board. <a href="/builder?slate={{ slate.id }}">Done</a></p>{% endif %}
 
   {% if view.items %}
@@ -56,6 +62,7 @@
               {% if lv.entry %}{{ chips(opinions.get(lv.entry.key)) }}{% endif %}
             </li>{% endfor %}
           </ul>
+          <input form="item-{{ v.item.id }}" name="tags" class="item-tags" value="{{ format_tags(v.item.tags) }}" aria-label="Tags for this bet" placeholder="tags: scenario=shootout" list="tag-options" autocomplete="off">
           {% if v.item.kind == 'parlay' and (not building or building.id != v.item.id) %}<p class="add-legs"><a href="/builder?slate={{ slate.id }}&parlay={{ v.item.id }}">+ add legs</a></p>{% endif %}
           {% if v.quote and v.quote.fair_prob and v.quote.naive_prob and (v.quote.fair_prob - v.quote.naive_prob) | abs > 0.001 %}
           <p class="hint">Correlated legs: fair {{ '%.1f%%' % (v.quote.fair_prob * 100) }} vs {{ '%.1f%%' % (v.quote.naive_prob * 100) }} if independent.</p>{% endif %}
@@ -101,7 +108,7 @@
   {% for o in view.overlaps %}{% if loop.first %}<p class="hint">Linked with each other or your open bets:</p><ul class="leg-list">{% endif %}
     <li>{{ o.a.label }} ↔ {{ o.b.label }} <span class="{{ 'neg' if o.correlation < 0 }}">{{ '%+.2f' % o.correlation }}</span></li>
   {% if loop.last %}</ul>{% endif %}{% endfor %}
-  <p class="hint">Blank stakes use the suggested joint-Kelly stake (with your open bets counted). Placing logs every item with a stake to your bets.</p>
+  <p class="hint">Blank stakes use the suggested joint-Kelly stake (with your open bets counted). Placing logs every item with a stake to your bets, each with the slate's tags and its own (key=value, space-separated).</p>
   {% else %}<p class="muted">Empty. Use <b>+ Bet</b> or <b>+ Parlay</b> on the board.</p>{% endif %}
   {% endif %}
 </section>

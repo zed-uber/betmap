@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_tags.html" as tagm %}
 {# Marks the field the last submit rejected. #}
 {% macro invalid(name) %}{% if prefill.invalid == name %} aria-invalid="true" autofocus{% endif %}{% endmacro %}
 {% block content %}
@@ -79,6 +80,8 @@
       <label>Book <input name="book" value="{{ prefill.book }}" required placeholder="dk"></label>
       <label>Fair prob <input name="fair_prob" value="{{ prefill.fair_prob }}"{{ invalid("fair_prob") }} inputmode="decimal" placeholder="0.54 (optional)"></label>
       <label class="wide">Notes <input name="notes" value="{{ prefill.notes }}"></label>
+      <label class="wide">Tags <input name="tags" value="{{ prefill.tags }}"{{ invalid("tags") }} list="tag-options" placeholder="key=value, space-separated: scenario=shootout window=sun-early" autocomplete="off"></label>
+      {{ tagm.options(tag_options) }}
       <input type="hidden" name="market_id" value="{{ prefill.market_id }}">
       <button type="submit" class="primary wide">Log bet</button>
     </form>

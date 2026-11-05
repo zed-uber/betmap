@@ -1,4 +1,10 @@
+import os
+
 import pytest
+
+# CLI output is checked as plain text; a shell's FORCE_COLOR would add escape codes. This
+# runs before betmap.cli creates its console.
+os.environ.pop("FORCE_COLOR", None)
 
 from betmap.config import get_settings
 

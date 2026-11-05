@@ -216,10 +216,27 @@ The web **Builder** page is where you put a bet card together:
   `manual`, or the model that built the slate. The source is fixed once placed, so each
   model's suggestions can be scored on their own. Placed slates can't be deleted, since
   they're the record of their bets; only drafts can.
+- **Tags** group and filter bets: `key=value` (or a bare `key`), space-separated, like
+  `scenario=shootout window=sun-early`. Tag a whole slate (the field next to **Duplicate**)
+  or each bet in it (the field under its legs, saved with **Save**). Placed bets get a copy
+  of the slate's tags plus their own, so later slate edits never change them. Tags are
+  lowercased; a key can repeat (`scenario=shootout scenario=chiefs-grind`). On the Bets
+  page, click a tag to see every bet with it (`/bets?tag=scenario` matches any scenario).
+  Manual bets take tags too, on the log and edit forms. Tags are for grouping only; a bet's
+  thesis goes in its notes.
 
 ```sh
 betmap slate list | show ID | compare ID ID ... | place ID
+betmap slate tag ID --tag window=sun-early            # the whole slate
+betmap slate tag ID --item 2 --tag scenario=shootout  # one bet: its # in `slate show`
+betmap bet add ... --tag scenario=shootout --tag window=sun-early
+betmap bet edit ID --tag hedge --untag scenario       # --untag scenario drops every value
+betmap bet edit ID --clear-tags --tag scenario=redo   # replace them all
+betmap bet list --all --tag scenario --tag window=sun-early   # bets with both
 ```
+
+`--tag` adds, `--untag` removes (a bare key removes all its values), and `--clear-tags`
+removes everything first, so `--tag` never wipes tags you didn't mention.
 
 **Second opinions.** Each board row and slate leg also shows other sources' probability for
 that side, green when it makes the best price +EV, with a count of how many agree (`3/4`).
@@ -288,9 +305,10 @@ margin.
      column (`manual`, or the model that suggested them, e.g. `synergy-v1`), set when the
      bet is placed and never changed afterward, so each model's suggestions can be scored on
      their own.
-  2. *Tags.* Key-value tags on slates and bets, for grouping and filtering:
+  2. ✅ *Tags.* Key-value tags on slates, slate items, and bets, for grouping and filtering:
      `scenario=shootout`, `window=sun-early`, `experiment=fade-public`. Stored in their own
-     tables (`slate_tags`, `bet_tags`) with real foreign keys. A key can have several values,
+     tables (`slate_tags`, `slate_item_tags`, `bet_tags`) with real foreign keys. Item tags
+     let each bet in a draft carry its own scenario before it's placed. A key can have several values,
      since one parlay can play two scenarios. Keys are lowercased and trimmed, and a short
      list of known keys feeds autocomplete without being enforced. Tags are copied onto bets
      when they're placed, so editing or deleting a slate never rewrites history. The rule:
